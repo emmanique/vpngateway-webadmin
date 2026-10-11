@@ -1,9 +1,0 @@
-[Unit]
-Description=Refresh VPN Gateway DEV direct firewall status
-[Timer]
-OnBootSec=30s
-OnUnitActiveSec=30s
-AccuracySec=5s
-Unit=vpngateway-dev-direct-snapshot.service
-[Install]
-WantedBy=timers.target

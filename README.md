@@ -95,8 +95,8 @@ Screenshots were captured from the running WebAdmin in English and anonymized fo
 Linux with systemd and administrative access, a private LAN IPv4 address, and clients configured to use this machine as their IPv4 gateway. Debian/Ubuntu systems can have missing dependencies installed automatically. Docker Engine, Compose v2, WireGuard, OpenVPN, nftables, iproute2, Python 3 and OpenSSL are used.
 
 ```bash
-git clone https://github.com/emmanique/vpngateway-webamin-dev.git
-cd vpngateway-webamin-dev
+git clone https://github.com/emmanique/vpngateway-webadmin.git
+cd vpngateway-webadmin
 ./start.sh --check
 sudo ./start.sh
 ```

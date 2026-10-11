@@ -1,9 +1,0 @@
-[Unit]
-Description=Refresh read-only multi-host firewall status (DEV)
-[Timer]
-OnBootSec=20s
-OnUnitActiveSec=30s
-AccuracySec=5s
-Unit=vpngateway-dev-direct-multi-snapshot.service
-[Install]
-WantedBy=timers.target
