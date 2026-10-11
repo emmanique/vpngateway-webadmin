@@ -1,0 +1,14 @@
+# Local-network HTTPS endpoint; does not publish the admin API to the Internet.
+services:
+  lan-https:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    ports:
+      - '${VPNGW_LAN_IPV4:?Configure LAN address}:443:443'
+    volumes:
+      - ./webadmin-lan-https.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./tls-local:/etc/nginx/tls:ro
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - webadmin

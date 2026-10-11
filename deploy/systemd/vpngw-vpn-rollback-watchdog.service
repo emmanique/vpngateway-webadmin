@@ -1,0 +1,11 @@
+[Unit]
+Description=Independent VPN host transaction rollback deadline watchdog
+After=local-fs.target
+ConditionPathExists=/var/lib/vpngw-vpn-transactions
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/vpngw-vpn-rollback-watchdog.py
+User=root
+Group=root
+NoNewPrivileges=true

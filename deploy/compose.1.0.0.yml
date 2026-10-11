@@ -1,0 +1,46 @@
+# Isolated staging stack. No privileged VPN or host port 53; production DNS untouched.
+name: vpngateway-v001-staging
+services:
+  webadmin:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile.webadmin
+    image: vpngateway/webadmin:1.0.0
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:18080:80'
+    environment:
+      VPNGW_DB_PATH: /data/gateway.sqlite3
+      VPNGW_RUNTIME_SCOPE: container
+    volumes:
+      - webadmin-data:/data
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      pihole:
+        condition: service_started
+      vpn:
+        condition: service_started
+  pihole:
+    image: pihole/pihole@sha256:5b9c8cf51de7d6d3f2240dbe72baf5f06e1fd39cb4d77a99fab4fa13e23bd1be
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set secret}
+      FTLCONF_dns_listeningMode: LOCAL
+    volumes:
+      - pihole-data:/etc/pihole
+    security_opt:
+      - no-new-privileges:true
+  vpn:
+    build:
+      context: ../apps/vpn
+    image: vpngateway/vpn:1.0.0
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  webadmin-data:
+  pihole-data:

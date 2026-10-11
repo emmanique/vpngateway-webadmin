@@ -1,0 +1,11 @@
+# DNS is bound only to the gateway LAN IP. The independent nft ACL
+# must be installed before enabling this overlay.
+services:
+  pihole:
+    ports:
+      - '${VPNGW_LAN_IPV4:?Configure LAN address}:53:53/udp'
+      - '${VPNGW_LAN_IPV4:?Configure LAN address}:53:53/tcp'
+    environment:
+      FTLCONF_dns_listeningMode: ALL
+      FTLCONF_dns_upstreams: '1.1.1.1'
+      FTLCONF_dhcp_active: 'false'

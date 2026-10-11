@@ -1,0 +1,11 @@
+[Unit]
+Description=Gateway Pi-hole DNS LAN CIDR access control
+After=network-online.target docker.service
+Wants=network-online.target
+[Service]
+EnvironmentFile=-/etc/default/vpngw-pihole-dns-acl
+Type=oneshot
+ExecStart=/usr/local/sbin/vpngw-pihole-dns-acl
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# Linux host agent socket; does not grant network privileges to WebAdmin.
+services:
+  webadmin:
+    environment:
+      VPNGW_POLICY_AGENT_SOCKET: /run/vpngw-policy-agent/control.sock
+      VPNGW_POLICY_AGENT_SECRET: /run/vpngw-policy-agent-keys/secret
+    volumes:
+      - /run/vpngw-policy-agent:/run/vpngw-policy-agent:ro
+      - /etc/vpngw-policy-agent/secret:/run/vpngw-policy-agent-keys/secret:ro

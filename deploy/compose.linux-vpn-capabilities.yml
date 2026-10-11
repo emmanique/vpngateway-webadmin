@@ -1,0 +1,13 @@
+# Linux-only opt-in. Enable only after VPN network isolation and rollback are tested.
+# Docker capabilities apply to the Linux VPN container, not the host network.
+# This does NOT grant sudo on the host, configure NAT, or activate a VPN.
+services:
+  vpn:
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    security_opt:
+      - no-new-privileges:true

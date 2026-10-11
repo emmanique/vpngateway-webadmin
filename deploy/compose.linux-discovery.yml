@@ -1,0 +1,7 @@
+# Optional Linux-only host discovery; never use with Windows Docker Desktop.
+services:
+  webadmin:
+    environment:
+      VPNGW_HOST_DISCOVERY_SNAPSHOT: /run/vpngw/discovery.json
+    volumes:
+      - ${VPNGW_SHARED_DIR:?Set VPNGW_SHARED_DIR}:/run/vpngw:ro

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check pending VPN host rollback deadlines
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=vpngw-vpn-rollback-watchdog.service
+
+[Install]
+WantedBy=timers.target
