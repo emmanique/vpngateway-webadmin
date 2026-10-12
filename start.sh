@@ -70,14 +70,10 @@ fi
 [[ "$EUID" -eq 0 ]] || { echo "Execute com sudo para instalar os serviços de sistema" >&2; exit 1; }
 umask 077
 if [[ ! -f deploy/.env ]]; then
-  password="$(openssl rand -hex 24)"
-  printf 'PIHOLE_WEBPASSWORD=%s\n' "$password" > deploy/.env
-  echo "Segredo administrativo gerado e guardado em deploy/.env (modo 0600)."
+  printf 'PIHOLE_WEBPASSWORD=\n' > deploy/.env
+  echo "Configuração criada: administração Pi-hole sem palavra-passe na LAN."
 fi
 chmod 0600 deploy/.env
-if grep -Eq 'CHANGE_ME|^PIHOLE_WEBPASSWORD=$' deploy/.env; then
-  echo "Segredo inválido em deploy/.env" >&2; exit 1
-fi
 install -d -m 0700 deploy/tls-local
 if [[ ! -s deploy/tls-local/lan.crt || ! -s deploy/tls-local/lan.key ]]; then
   openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 365 \

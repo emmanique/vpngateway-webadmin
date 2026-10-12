@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     environment:
       TZ: ${TZ:-UTC}
-      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set secret}
+      FTLCONF_webserver_api_password: "${PIHOLE_WEBPASSWORD:-}"
       FTLCONF_dns_listeningMode: LOCAL
     volumes:
       - pihole-data:/etc/pihole

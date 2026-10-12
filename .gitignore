@@ -13,3 +13,6 @@ dist/
 /deploy/tls-local/
 
 *.tsbuildinfo
+
+!deploy/webadmin-nginx.conf
+!deploy/webadmin-lan-https.conf
