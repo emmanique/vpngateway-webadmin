@@ -16,3 +16,5 @@ dist/
 
 !deploy/webadmin-nginx.conf
 !deploy/webadmin-lan-https.conf
+
+/releases/dev/

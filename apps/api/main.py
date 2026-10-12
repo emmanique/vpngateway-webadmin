@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from contextlib import closing
 from pathlib import Path
 
-app = FastAPI(title="VPN Gateway Manager API", version="1.0.0")
+app = FastAPI(title="VPN Gateway Manager API", version="1.0.1")
 _lock = RLock()
 _discovery_lock = Lock()
 _connections = {}
@@ -2440,7 +2440,7 @@ def wireguard_profiles_status():
 def gateway_live():
     """Read-only state built from saved policies, never sample client IDs."""
     policies=list_policies()
-    return {'version':'1.0.0',
+    return {'version':'1.0.1',
             'scope':os.environ.get('VPNGW_RUNTIME_SCOPE','host'),
             'clients':{p['host_ip']:{'route':p['destination']} for p in policies},
             'wireguard':{'interface_present':any(p.get('protocol')=='wireguard' and p.get('connected')

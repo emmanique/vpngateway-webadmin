@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 for utility in systemctl systemd-run nft ip openssl; do
   command -v "$utility" >/dev/null || { echo "Falta: $utility" >&2; exit 1; }
 done
-install -d -m 0700 /etc/vpngw-policy-agent
+install -d -m 0700 /etc/vpngw-policy-agent /etc/vpngw-policy-agent/persistent-vpn
 if [[ ! -s /etc/vpngw-policy-agent/secret ]]; then
   openssl rand -hex 32 > /etc/vpngw-policy-agent/secret
   chmod 0600 /etc/vpngw-policy-agent/secret
@@ -20,8 +20,8 @@ for script in vpngw-vpn-route-plan.py vpngw-vpn-transaction.py vpngw-openvpn-age
 done
 install -m 0755 scripts/vpngw-vpn-boot-guard.py /usr/local/libexec/vpngw-vpn-boot-guard.py
 install -m 0644 deploy/systemd/vpngw-vpn-boot-guard.service /etc/systemd/system/vpngw-vpn-boot-guard.service
-# Do not enable the boot guard until a complete, verified persistent VPN
-# policy is committed. Enabling it prematurely could disrupt DIRECT clients.
+# Empty directories install no guards; confirmed policies are persisted by the agent.
+systemctl enable vpngw-vpn-boot-guard.service
 install -m 0644 deploy/systemd/vpngw-policy-agent.service /etc/systemd/system/vpngw-policy-agent.service
 systemctl daemon-reload
 systemctl enable --now vpngw-policy-agent.service

@@ -5,7 +5,7 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile.webadmin
-    image: vpngateway/webadmin:1.0.0
+    image: vpngateway/webadmin:1.0.1
     restart: unless-stopped
     ports:
       - '127.0.0.1:18080:80'
@@ -35,7 +35,7 @@ services:
   vpn:
     build:
       context: ../apps/vpn
-    image: vpngateway/vpn:1.0.0
+    image: vpngateway/vpn:1.0.1
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

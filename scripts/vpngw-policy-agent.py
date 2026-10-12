@@ -266,6 +266,59 @@ def install_rules(plan, pid):
             "ip", "daddr", host, "icmp", "type", "redirect", "counter", "drop")
 
 
+def sync_boot_policy(pid, state, directory=None):
+    """Keep early-boot guards aligned with confirmed runtime policies."""
+    import importlib.util
+    source = Path(__file__).with_name("vpngw-vpn-boot-guard.py")
+    spec = importlib.util.spec_from_file_location("vpngw_boot_sync", source)
+    boot = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(boot)
+    pid = ensure_id(pid)
+    directory = Path(directory) if directory is not None else boot.STATE
+    table = boot.guard_name(pid)
+    current = subprocess.run([NFT, "list", "table", "inet", table],
+                             capture_output=True, text=True, timeout=8)
+    def remove_live():
+        if current.returncode == 0:
+            run(NFT, "delete", "table", "inet", table)
+    if state is None or (state.get("status") == "active" and
+                         state.get("plan", {}).get("destination") in ("direct", "blocked")):
+        remove_live()
+        (directory / (pid + ".json")).unlink(missing_ok=True)
+        return
+    if state.get("status") != "active":
+        return  # Preserve fail-closed protection when recovery fails.
+    if state.get("vpn_pending"):
+        remove_live()  # A reboot must still restore the last confirmed config.
+        return
+    plan = state["plan"]
+    data = boot.validate({"id": pid, "host": plan["host"], "lan": plan["lan"],
+                          "vpn": state["vpn_runtime"]["interface"],
+                          "mac": plan["registered_mac"], "confirmed": True})
+    live = run(NFT, "list", "table", "inet", "vpngw_vpn_" + hashlib.sha256(pid.encode()).hexdigest()[:12]).stdout
+    if not all(value in live for value in (data["host"], data["lan"], data["vpn"], data["mac"], "drop")):
+        raise ValueError("Cannot persist an unverified VPN host guard")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if directory.is_symlink() or directory.stat().st_uid != 0 or directory.stat().st_mode & 0o077:
+        raise ValueError("Boot guard directory must be private and root-owned")
+    target = directory / (pid + ".json")
+    if target.is_symlink():
+        raise ValueError("Boot guard symlink refused")
+    fd, temporary = tempfile.mkstemp(prefix=".sync-", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(data, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        batch = ("delete table inet " + table + "\n" if current.returncode == 0 else "") + boot.render(data)
+        run(NFT, "-c", "-f", "-", input_text=batch)
+        run(NFT, "-f", "-", input_text=batch)
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def save_state(pid, data):
     BASE.mkdir(mode=0o700, parents=True, exist_ok=True)
     target = state_path(pid)
@@ -273,6 +326,7 @@ def save_state(pid, data):
     temp.write_text(json.dumps(data), encoding="utf-8")
     os.chmod(temp, 0o600)
     temp.replace(target)
+    sync_boot_policy(pid, data)
 
 
 def schedule_rollback(pid):
@@ -947,6 +1001,7 @@ def dispatch(data):
             subprocess.run(["/usr/bin/systemctl", "stop", "vpngw-vpn-revert-" + pid + ".timer"],
                            capture_output=True)
             removed_state_file = BASE / (ensure_id(pid) + ".json")
+            sync_boot_policy(pid, None)
             removed_state_file.unlink(missing_ok=True)
             if removed_state_file.exists() or inspect_rules(pid):
                 raise ValueError("Host state not fully purged")
@@ -1067,6 +1122,7 @@ def recover_active_policy(pid, state):
                     raise ValueError("Recuperação VPN sem rota efectiva")
                 if not tunnel_present and probe.returncode == 0:
                     raise ValueError("VPN desligada mas rota DIRECT acessível")
+                sync_boot_policy(pid, state)
                 return
             mac = state["plan"].get("registered_mac")
             if not inspect_rules(pid) or not identity_guard_ok(pid, mac):
@@ -1088,7 +1144,7 @@ def restore_boot_vpn_profiles():
     if not base:
         return
     root = Path(base)
-    if not root.is_dir() or root.is_symlink():
+    if root.is_symlink():
         return
     profiles = set()
     for path in BASE.glob("*.json"):

@@ -95,8 +95,8 @@ Screenshots were captured from the running WebAdmin in English and anonymized fo
 Linux with systemd and administrative access, a private LAN IPv4 address, and clients configured to use this machine as their IPv4 gateway. Debian/Ubuntu systems can have missing dependencies installed automatically. Docker Engine, Compose v2, WireGuard, OpenVPN, nftables, iproute2, Python 3 and OpenSSL are used.
 
 ```bash
-git clone https://github.com/emmanique/vpngateway-webadmin.git
-cd vpngateway-webadmin
+git clone https://github.com/emmanique/vpngateway-webamin-dev.git
+cd vpngateway-webamin-dev
 ./start.sh --check
 sudo ./start.sh
 ```
@@ -184,3 +184,15 @@ MIT — see [LICENSE](LICENSE).
 **Self-hosted. Per-host. Multi-VPN. Fail-closed.**
 
 </div>
+
+## Release 1.0.1 validation
+
+Version 1.0.1 includes resilient Python/npm dependency downloads, complete Nginx packaging, passwordless LAN Pi-hole administration, confirmed per-host boot guards and recovery of stored VPN profiles after reboot. QA covered 32 directed route transitions, a 75-second provider-connectivity outage, encrypted backup/restore, factory defaults and interface remapping.
+
+### DNS scope
+
+Managed IPv4 DNS queries from VPN clients are redirected to the VPN provider resolver. DoH and DoT traffic follows the assigned VPN route but bypasses Pi-hole filtering. The gateway uses its own system resolver for control-plane lookups, including public-IP checks. IPv6 forwarding is blocked for managed VPN clients.
+
+## Deployment packages
+
+[Download version 1.0.1 deployment packages](https://github.com/emmanique/vpngateway-webadmin/tree/v1.0.1/releases/v1.0.1). Each archive includes source provenance; manifest.json supplies SHA-256 checksums.

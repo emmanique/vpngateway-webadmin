@@ -59,7 +59,7 @@ if ip.version!=4 or not ip.is_private or ip.is_loopback or ip.is_link_local:
 PY
 ip -4 -j addr show dev "$LAN_IFACE" | python3 -c 'import json,sys; wanted=sys.argv[1]; active={i["local"] for x in json.load(sys.stdin) for i in x.get("addr_info",[]) if i.get("family")=="inet"}; sys.exit(0 if wanted in active else 1)' "$LAN_IPV4" || { echo "O IPv4 indicado não pertence à interface LAN seleccionada" >&2; exit 1; }
 echo "Gateway VPN Multi: LAN $LAN_IFACE / $LAN_IPV4"
-files=(-f deploy/compose.1.0.0.yml -f deploy/compose.linux-policy-agent.yml -f deploy/compose.linux-discovery.yml -f deploy/compose.lan-https.yml -f deploy/compose.pihole-lan-dns.yml)
+files=(-f deploy/compose.yml -f deploy/compose.linux-policy-agent.yml -f deploy/compose.linux-discovery.yml -f deploy/compose.lan-https.yml -f deploy/compose.pihole-lan-dns.yml)
 export VPNGW_SHARED_DIR=/var/lib/vpngw/shared
 if ((CHECK)); then
   VPNGW_LAN_IPV4="$LAN_IPV4" PIHOLE_WEBPASSWORD=check-only docker compose --env-file deploy/.env.example "${files[@]}" config --quiet
@@ -123,5 +123,13 @@ fi
 systemctl enable vpngw-pihole-dns-acl.service >/dev/null
 export VPNGW_LAN_IPV4="$LAN_IPV4"
 docker compose --env-file deploy/.env "${files[@]}" up -d --build
+# Resolve the actual data mount so reboot recovery does not depend on a container name.
+webadmin_id="$(docker compose --env-file deploy/.env "${files[@]}" ps -q webadmin)"
+profile_data="$(docker inspect "$webadmin_id" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}')"
+[[ "$profile_data" == /* && "$profile_data" != *$'\n'* && "$profile_data" != *'"'* ]] || { echo "Volume de perfis inválido" >&2; exit 1; }
+printf 'VPNGW_WG_PROFILE_DIR="%s/wireguard-profiles"\n' "$profile_data" > /etc/default/vpngw-policy-agent
+chmod 0644 /etc/default/vpngw-policy-agent
+systemctl restart vpngw-policy-agent.service
+systemctl is-active --quiet vpngw-policy-agent.service
 echo "WebAdmin: https://$LAN_IPV4/"
 echo "Pi-hole DNS: $LAN_IPV4:53; administração: https://$LAN_IPV4:8443/"

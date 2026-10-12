@@ -6,6 +6,7 @@ Requires=docker.service
 
 [Service]
 Type=simple
+EnvironmentFile=-/etc/default/vpngw-policy-agent
 User=root
 Group=root
 ExecStart=/usr/bin/python3 /usr/local/libexec/vpngw-policy-agent.py serve
@@ -20,7 +21,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/run/vpngw-policy-agent /var/lib/vpngw-policy-agent /etc/openvpn/client
+ReadWritePaths=/run/vpngw-policy-agent /var/lib/vpngw-policy-agent /etc/openvpn/client /etc/vpngw-policy-agent/persistent-vpn
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6

@@ -1,4 +1,8 @@
 FROM node:22-alpine AS build
+ENV npm_config_fetch_retries=5 \
+    npm_config_fetch_retry_mintimeout=10000 \
+    npm_config_fetch_retry_maxtimeout=60000 \
+    npm_config_fetch_timeout=180000
 WORKDIR /app
 COPY package.json tsconfig.json index.html ./
 COPY src ./src
