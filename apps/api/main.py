@@ -757,7 +757,7 @@ def create_policy(data: Policy, request: Request):
             raise HTTPException(422, str(e))
         if data.destination not in ("direct", "blocked") and data.failure_mode == "direct":
             raise HTTPException(422, "Automatic direct fallback is not allowed for VPN-bound hosts")
-        if data.destination != "direct" and any(h["host_ip"] == host_ip and h["service_active"] for h in direct_hosts()["hosts"]):
+        if data.destination != "direct" and any(h["host_ip"] == host_ip and h.get("service_active", False) for h in direct_hosts()["hosts"]):
             raise HTTPException(409, "Host has an active DIRECT systemd route; disable it before assigning VPN")
         if data.destination not in ("direct", "blocked"):
             _vpn_host_automation_ready(data.destination)
@@ -1025,7 +1025,7 @@ def update_policy(policy_id: str, data: Policy):
             raise HTTPException(422, "Perfil VPN não encontrado")
         if data.destination not in ("direct", "blocked") and data.failure_mode != "block":
             raise HTTPException(422, "VPN exige fail-closed")
-        if data.destination != "direct" and any(h["host_ip"] == existing["host_ip"] and h["service_active"] for h in direct_hosts()["hosts"]):
+        if data.destination != "direct" and any(h["host_ip"] == existing["host_ip"] and h.get("service_active", False) for h in direct_hosts()["hosts"]):
             raise HTTPException(409, "Host com rota DIRECT activa; desactive-a antes de atribuir outra saída")
         entry = {**existing, "destination": data.destination, "failure_mode": "block", "status": "draft"}
         _save("policies", policy_id, entry)
@@ -1256,7 +1256,7 @@ def delete_policy(policy_id: str, request: Request):
         if policy_id not in _policies:
             raise HTTPException(404, "Unknown policy")
         entry = _policies[policy_id]
-        if any(h["host_ip"] == entry["host_ip"] and h["service_active"] for h in direct_hosts()["hosts"]):
+        if any(h["host_ip"] == entry["host_ip"] and h.get("service_active", False) for h in direct_hosts()["hosts"]):
             raise HTTPException(409, "Host DIRECT gerido por systemd: remoção automática não autorizada")
         if entry["destination"] in ("direct", "blocked"):
             _policy_agent_call("rollback", policy_id, entry)
@@ -1985,7 +1985,7 @@ def direct_hosts():
             verified=bool(runtime.get("route_verified") and runtime.get("firewall_verified"))
         except HTTPException:
             verified=False
-        hosts.append({"host_ip":policy["host_ip"],"active":verified,
+        hosts.append({"host_ip":policy["host_ip"],"service_active":False,"active":verified,
                       "firewall_verified":verified,"verification":"policy_agent"})
     return {"hosts":hosts,"vpn_routing_active":any(
         p["destination"] not in ("direct","blocked") for p in list_policies()),
