@@ -185,14 +185,12 @@ MIT — see [LICENSE](LICENSE).
 
 </div>
 
-## Release 1.0.1 validation
+## Release 1.0.2 validation
 
-Version 1.0.1 includes resilient Python/npm dependency downloads, complete Nginx packaging, passwordless LAN Pi-hole administration, confirmed per-host boot guards and recovery of stored VPN profiles after reboot. QA covered 32 directed route transitions, a 75-second provider-connectivity outage, encrypted backup/restore, factory defaults and interface remapping.
+Version 1.0.2 includes resilient Python/npm dependency downloads, complete Nginx packaging, passwordless LAN Pi-hole administration, confirmed per-host boot guards and recovery of stored VPN profiles after reboot. QA covered 32 directed route transitions, a 75-second provider-connectivity outage, encrypted backup/restore, factory defaults and interface remapping.
 
 ### DNS scope
 
 Managed IPv4 DNS queries from VPN clients are redirected to the VPN provider resolver. DoH and DoT traffic follows the assigned VPN route but bypasses Pi-hole filtering. The gateway uses its own system resolver for control-plane lookups, including public-IP checks. IPv6 forwarding is blocked for managed VPN clients.
 
-## Deployment packages
-
-[Download version 1.0.1 deployment packages](https://github.com/emmanique/vpngateway-webadmin/tree/v1.0.1/releases/v1.0.1). Each archive includes source provenance; manifest.json supplies SHA-256 checksums.
+Authorizing a changed host MAC now synchronizes the basic firewall guard, VPN guard and persistent boot protection, with rollback on failure.

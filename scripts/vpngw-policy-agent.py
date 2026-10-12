@@ -129,17 +129,9 @@ def identity_guard_ok(pid, mac):
     return "ether saddr != " + mac.lower() in listing and "vpngw_identity_guard" in listing
 
 
-def set_identity_guard(pid, mac):
-    if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
-        raise ValueError("MAC inválido")
-    state = read_state(pid)
-    if not state or state.get("status") != "active":
-        raise ValueError("Política activa inexistente")
-    plan = state["plan"]
+def _set_kernel_identity_guard(pid, mac, plan):
     name = chain_name(pid)
     listing = run(NFT, "-a", "list", "chain", "ip", "filter", name).stdout
-    # Never remove the matching guard when the MAC is unchanged.
-    # A repeated identity update must be idempotent.
     old_handles = [line.split("# handle ")[-1].split()[0]
                    for line in listing.splitlines()
                    if "vpngw_identity_guard" in line and "# handle " in line
@@ -154,9 +146,46 @@ def set_identity_guard(pid, mac):
         run(NFT, "delete", "rule", "ip", "filter", name, "handle", handle)
     if not identity_guard_ok(pid, mac):
         raise ValueError("Protecção MAC perdeu-se durante a actualização")
-    plan["registered_mac"] = mac
-    save_state(pid, state)
-    return {"status":"active", "registered_mac":mac, "guard_verified":True}
+
+
+def set_identity_guard(pid, mac):
+    if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
+        raise ValueError("MAC inválido")
+    state = read_state(pid)
+    if not state or state.get("status") != "active":
+        raise ValueError("Política activa inexistente")
+    original = json.loads(json.dumps(state))
+    plan = state["plan"]
+    old_mac = plan.get("registered_mac")
+    vpn = plan["destination"] not in ("direct", "blocked")
+    module = None
+    if vpn and mac != old_mac:
+        import importlib.util
+        source = Path(__file__).with_name("vpngw-vpn-transaction.py")
+        spec = importlib.util.spec_from_file_location("vpngw_identity_transaction", source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    def replace_vpn_guard(value):
+        runtime = state["vpn_runtime"]
+        text = module.guard_text(pid, plan["host"], value, plan["lan"],
+                                 runtime["interface"], runtime.get("dns_ipv4"))
+        module.replace_guard(text, pid)
+    try:
+        # Replace the VPN guard first. The old basic guard keeps the new host
+        # blocked until all per-host rules agree on the newly observed MAC.
+        if module is not None:
+            replace_vpn_guard(mac)
+        _set_kernel_identity_guard(pid, mac, plan)
+        plan["registered_mac"] = mac
+        save_state(pid, state)  # Also synchronizes the verified boot guard.
+    except Exception:
+        # Restore the complete previous identity after any partial update.
+        if module is not None:
+            replace_vpn_guard(old_mac)
+        _set_kernel_identity_guard(pid, old_mac, original["plan"])
+        save_state(pid, original)
+        raise
+    return {"status": "active", "registered_mac": mac, "guard_verified": True}
 
 
 def inspect_rules(pid):
