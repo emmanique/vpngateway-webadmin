@@ -6,6 +6,8 @@
 **/*.tsbuildinfo
 *.sqlite3
 *.conf
+!deploy/webadmin-nginx.conf
+!deploy/webadmin-lan-https.conf
 *.key
 *.env
 .env*

@@ -658,12 +658,23 @@ def delete_connection(connection_id: str):
                 if staged.exists() or staged.is_symlink():
                     raise HTTPException(409, "Eliminação anterior por reconciliar")
                 os.replace(saved, staged)
+        # Stage OpenVPN managed files before removing metadata. A failed DB
+        # update must restore the credentials, not orphan or lose them.
+        openvpn_snapshot = None
+        if _connections[connection_id].get("protocol") == "openvpn":
+            openvpn_snapshot = _wireguard_agent_call(connection_id, "openvpn_backup_export")
+            _wireguard_agent_call(connection_id, "openvpn_backup_restore", files={})
         try:
             _save("connections", connection_id)
-        except Exception:
+        except Exception as error:
             if staged is not None:
                 os.replace(staged, saved)
-            raise
+            if openvpn_snapshot is not None:
+                try:
+                    _wireguard_agent_call(connection_id, "openvpn_backup_restore", files=openvpn_snapshot)
+                except Exception as rollback_error:
+                    raise HTTPException(503, "Rollback OpenVPN incompleto; intervenção necessária") from rollback_error
+            raise error
         del _connections[connection_id]
         _revision += 1
         if staged is not None:
@@ -858,6 +869,19 @@ def host_transition_plan(policy_id: str, destination: str):
     except (ValueError, KeyError, OSError) as error:
         raise HTTPException(422, str(error))
     return {**plan, "executor_available": False, "can_apply": False}
+
+
+def _vpn_host_automation_ready(profile_id: str) -> None:
+    """Reject unknown or unsupported profiles with a client error, not HTTP 500.
+
+    Activation still requires the existing authenticated transition and
+    kernel-level fail-closed verification; this only validates creation.
+    """
+    profile = _connections.get(profile_id)
+    if profile is None:
+        raise HTTPException(422, "Perfil VPN não encontrado")
+    if profile.get("protocol") not in ("wireguard", "openvpn"):
+        raise HTTPException(409, "Protocolo VPN não suportado")
 
 
 def _vpn_profile_dns_ipv4(profile_id: str) -> str:

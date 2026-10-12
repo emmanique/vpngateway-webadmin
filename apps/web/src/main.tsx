@@ -501,7 +501,7 @@ function App() {
       </div><p className="muted">Dados recolhidos do Pi-hole principal. O resolvedor VPN tem cache e estatísticas próprias; os seus pedidos não estão incluídos nestes totais. {dnsLive?.stats?'Consultas em cache no principal: '+dnsLive.stats.cached.toLocaleString('pt-PT')+'.':'Estatísticas indisponíveis.'}</p>
       </section>
       <section className="panel"><div className="panelhead"><h2>Serviço e administração</h2><span className="softtag">Pi-hole v{dnsSummary?.version||'—'}</span></div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:20,flexWrap:"wrap",padding:"22px 24px"}}><div><strong>Pi-hole</strong><p className={dnsLive?.primary_dns?"service-up":"service-unknown"}>{dnsLive?.primary_dns?"● Operacional":"Estado não confirmado"}</p><small>DNS · IP da LAN:53</small></div><a className="button" href={dnsLive?.admin_url||dnsSummary?.admin_url||"https://IP da LAN:8443/admin/"} target="_blank" rel="noopener noreferrer">Abrir administração Pi-hole ↗</a></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:20,flexWrap:"wrap",padding:"22px 24px"}}><div><strong>Pi-hole</strong><p className={dnsLive?.primary_dns?"service-up":"service-unknown"}>{dnsLive?.primary_dns?"● Operacional":"Estado não confirmado"}</p><small>{`DNS · ${window.location.hostname}:53`}</small></div><a className="button" href={`https://${window.location.hostname}:8443/admin/`} target="_blank" rel="noopener noreferrer">Abrir administração Pi-hole ↗</a></div>
       </section>
     </>}
     {page==='connections'&&<><section className="panel vpn-summary-panel"><div className="panelhead"><h2>Resumo das ligações VPN</h2><span className="softtag">Estado real · actualização 5 s</span></div>
