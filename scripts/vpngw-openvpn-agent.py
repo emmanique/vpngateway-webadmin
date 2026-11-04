@@ -29,24 +29,70 @@ def configured_transport(pid):
 
 
 def pushed_dns_ipv4(pid):
-    """Read only the latest pushed DNS IPv4 from the unit journal; never expose PUSH_REPLY."""
+    """Read the latest provider DNS push from the CURRENT OpenVPN unit session.
+
+    A busy tunnel can generate thousands of replay warnings, pushing the
+    initial PUSH_REPLY outside a fixed journal tail. Search in reverse from
+    the unit's actual activation, without exposing the full push or credentials.
+    """
     checkid(pid)
-    log=subprocess.run(["/usr/bin/journalctl","-u","openvpn-client@"+pid+".service",
-        "--no-pager","-n","150","-o","cat"],capture_output=True,text=True,timeout=8)
-    if log.returncode:
+    unit = "openvpn-client@" + pid + ".service"
+    active = subprocess.run(
+        ["/usr/bin/systemctl", "show", "-p", "ActiveEnterTimestamp", "--value", unit],
+        capture_output=True, text=True, timeout=8)
+    since = active.stdout.strip()
+    if active.returncode != 0 or not re.fullmatch(
+            r"[A-Za-z]{3} 20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} (?:UTC|[A-Za-z_/+-]+)",
+            since):
         return None
-    # Prefer latest push; refuse profiles without a provider-advertised IPv4 resolver.
-    pushes=[line for line in log.stdout.splitlines() if "PUSH_REPLY," in line]
-    if not pushes:
+
+    command = ["/usr/bin/journalctl", "-u", unit,
+               "--since", since, "--reverse", "--no-pager", "-o", "cat"]
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True)
+    push = None
+    try:
+        # Never store arbitrary provider log contents; the last session push
+        # is the first matching entry in reverse chronological journal order.
+        for line in proc.stdout:
+            if "PUSH_REPLY," in line:
+                push = line
+                break
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        if proc.stdout:
+            proc.stdout.close()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+    if not push:
         return None
-    match=re.search(r"(?:^|,)dhcp-option DNS (\d{1,3}(?:\.\d{1,3}){3})(?:,|')",pushes[-1])
+    match = re.search(r"(?:^|,)dhcp-option DNS (\d{1,3}(?:\.\d{1,3}){3})(?:,|')", push)
     if not match:
         return None
     try:
-        address=ipaddress.IPv4Address(match.group(1))
-        return str(address) if not (address.is_multicast or address.is_unspecified or address.is_loopback) else None
+        address = ipaddress.IPv4Address(match.group(1))
+        return str(address) if not (
+            address.is_multicast or address.is_unspecified or address.is_loopback) else None
     except ipaddress.AddressValueError:
         return None
+
+
+def proton_pmp_authorized(pid):
+    """Only expose an authorization boolean; never emit OpenVPN credentials."""
+    checkid(pid)
+    auth = ROOT / (pid + ".auth")
+    if not auth.is_file() or auth.is_symlink() or auth.stat().st_size > 1024:
+        return False
+    try:
+        with auth.open("r", encoding="utf-8") as handle:
+            username = handle.readline().strip()
+        return "pmp" in username.split("+")[1:]
+    except (OSError, UnicodeError):
+        return False
 
 
 def inspect(pid):
@@ -56,7 +102,7 @@ def inspect(pid):
     info=run("ip","-o","-4","addr","show","dev",dev) if active else None
     match=re.search(r"inet (\d+\.\d+\.\d+\.\d+)/",info.stdout) if info and info.returncode==0 else None
     addr=match.group(1) if match else None
-    return {"id":pid,"stored":(ROOT/(pid+".conf")).is_file(),"credentials":(ROOT/(pid+".auth")).is_file(),"tunnel_active":active and bool(addr),"connected":active and bool(addr),"interface_name":dev if active else None,"assigned_ipv4":addr,"state":"connected" if active and addr else "connecting" if active else "disconnected","public_ipv4":None,"dns_ipv4":pushed_dns_ipv4(pid) if active else None,"transport":configured_transport(pid)}
+    return {"id":pid,"stored":(ROOT/(pid+".conf")).is_file(),"credentials":(ROOT/(pid+".auth")).is_file(),"tunnel_active":active and bool(addr),"connected":active and bool(addr),"interface_name":dev if active else None,"assigned_ipv4":addr,"state":"connected" if active and addr else "connecting" if active else "disconnected","public_ipv4":None,"dns_ipv4":pushed_dns_ipv4(pid) if active else None,"transport":configured_transport(pid),"proton_pmp_authorized":proton_pmp_authorized(pid)}
 def probe(pid):
     state=inspect(pid)
     if not state["connected"]:

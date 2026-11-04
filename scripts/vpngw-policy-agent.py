@@ -22,6 +22,7 @@ SOCKET = "/run/vpngw-policy-agent/control.sock"
 TOKEN = "/etc/vpngw-policy-agent/secret"
 LOCK = threading.RLock()
 DISCOVERY_LOCK = threading.Lock()
+WG_RETRY_AFTER = {}  # monotonic backoff for unexpectedly lost WireGuard tunnels
 NFT = "/usr/sbin/nft"
 IP = "/usr/sbin/ip"
 MAX_BYTES = 131072
@@ -129,23 +130,72 @@ def identity_guard_ok(pid, mac):
     return "ether saddr != " + mac.lower() in listing and "vpngw_identity_guard" in listing
 
 
-def _set_kernel_identity_guard(pid, mac, plan):
+def renumber_guard_ok(pid, mac, plan):
+    """Confirm a MAC-specific DOCKER-USER jump and an IPv4-renumbering drop."""
     name = chain_name(pid)
-    listing = run(NFT, "-a", "list", "chain", "ip", "filter", name).stdout
-    old_handles = [line.split("# handle ")[-1].split()[0]
-                   for line in listing.splitlines()
-                   if "vpngw_identity_guard" in line and "# handle " in line
-                   and ("ether saddr != " + mac) not in line]
-    if not identity_guard_ok(pid, mac):
-        run(NFT, "insert", "rule", "ip", "filter", name, "iifname", plan["lan"],
-            "ip", "saddr", plan["host"], "ether", "saddr", "!=", mac,
-            "drop", "comment", "vpngw_identity_guard")
-    if not identity_guard_ok(pid, mac):
-        raise ValueError("Protecção MAC não confirmada")
-    for handle in old_handles:
-        run(NFT, "delete", "rule", "ip", "filter", name, "handle", handle)
-    if not identity_guard_ok(pid, mac):
-        raise ValueError("Protecção MAC perdeu-se durante a actualização")
+    chain = run(NFT, "list", "chain", "ip", "filter", name).stdout
+    parent = run(NFT, "list", "chain", "ip", "filter", "DOCKER-USER").stdout
+    mac = mac.lower()
+    host = plan["host"]
+    return (any("vpngw_ip_rebind_guard" in line
+                and "ether saddr " + mac in line
+                and "ip saddr != " + host in line
+                for line in chain.splitlines())
+            and any("jump " + name in line and "ether saddr " + mac in line
+                    for line in parent.splitlines()))
+
+
+def _set_kernel_identity_guard(pid, mac, plan):
+    """Atomically align identity, renumber guard and MAC jump for a host."""
+    if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
+        raise ValueError("MAC inválido")
+    host = str(ipaddress.IPv4Address(plan["host"]))
+    lan = plan["lan"]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", lan):
+        raise ValueError("Interface LAN inválida")
+    name = chain_name(pid)
+    chain = run(NFT, "-a", "list", "chain", "ip", "filter", name).stdout
+    parent = run(NFT, "-a", "list", "chain", "ip", "filter", "DOCKER-USER").stdout
+    desired_identity = "ether saddr != " + mac
+    desired_renumber = "ether saddr " + mac
+    wanted_identity = any("vpngw_identity_guard" in line and desired_identity in line
+                          for line in chain.splitlines())
+    wanted_renumber = any("vpngw_ip_rebind_guard" in line
+                          and desired_renumber in line and "ip saddr != " + host in line
+                          for line in chain.splitlines())
+    wanted_jump = any("jump " + name in line and desired_renumber in line
+                      for line in parent.splitlines())
+    batch = []
+    if not wanted_identity:
+        batch.append(f'insert rule ip filter {name} iifname "{lan}" ip saddr {host} '
+                     f'ether saddr != {mac} drop comment "vpngw_identity_guard"')
+    if not wanted_renumber:
+        batch.append(f'insert rule ip filter {name} iifname "{lan}" ether saddr {mac} '
+                     f'ip saddr != {host} drop comment "vpngw_ip_rebind_guard"')
+    if not wanted_jump:
+        batch.append(f'insert rule ip filter DOCKER-USER iifname "{lan}" '
+                     f'ether saddr {mac} jump {name}')
+    for line in chain.splitlines():
+        if "# handle " not in line:
+            continue
+        owned = "vpngw_identity_guard" in line or "vpngw_ip_rebind_guard" in line
+        valid = ((("vpngw_identity_guard" in line) and desired_identity in line)
+                 or (("vpngw_ip_rebind_guard" in line) and desired_renumber in line
+                     and "ip saddr != " + host in line))
+        if owned and not valid:
+            handle = line.split("# handle ")[-1].split()[0]
+            batch.append(f"delete rule ip filter {name} handle {handle}")
+    for line in parent.splitlines():
+        if "# handle " in line and "jump " + name in line and "ether saddr " in line:
+            if desired_renumber not in line:
+                handle = line.split("# handle ")[-1].split()[0]
+                batch.append(f"delete rule ip filter DOCKER-USER handle {handle}")
+    if batch:
+        script = "\n".join(batch) + "\n"
+        run(NFT, "-c", "-f", "-", input_text=script)
+        run(NFT, "-f", "-", input_text=script)
+    if not identity_guard_ok(pid, mac) or not renumber_guard_ok(pid, mac, plan):
+        raise ValueError("Protecção IP/MAC não confirmada após actualização")
 
 
 def set_identity_guard(pid, mac):
@@ -267,6 +317,15 @@ def install_rules(plan, pid):
     run(NFT, "insert", "rule", "ip", "filter", "DOCKER-USER",
         "ip", "daddr", host, "jump", name)
     if plan.get("registered_mac"):
+        # MAC-specific jump also catches DHCP renumbering: an unregistered
+        # source IPv4 cannot silently escape this policy through DIRECT.
+        run(NFT, "insert", "rule", "ip", "filter", "DOCKER-USER",
+            "iifname", lan, "ether", "saddr", plan["registered_mac"],
+            "jump", name)
+        run(NFT, "insert", "rule", "ip", "filter", name,
+            "iifname", lan, "ether", "saddr", plan["registered_mac"],
+            "ip", "saddr", "!=", host, "drop",
+            "comment", "vpngw_ip_rebind_guard")
         run(NFT, "insert", "rule", "ip", "filter", name,
             "iifname", lan, "ip", "saddr", host, "ether", "saddr",
             "!=", plan["registered_mac"], "drop",
@@ -386,6 +445,22 @@ def read_state(pid):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
+def wireguard_paused_path(profile_id):
+    """Persist an explicit operator disconnect separately from tunnel health."""
+    return BASE / ("wireguard-paused-" + ensure_id(profile_id))
+
+
+def set_wireguard_paused(profile_id, paused):
+    path = wireguard_paused_path(profile_id)
+    if paused:
+        BASE.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            stream.write("operator-disconnect\n")
+    else:
+        path.unlink(missing_ok=True)
+
+
 def wireguard_iface(profile_id):
     return "wg" + hashlib.sha256(ensure_id(profile_id).encode()).hexdigest()[:11]
 
@@ -439,8 +514,15 @@ def wireguard_probe(profile_id):
 
 def wireguard_disconnect(profile_id):
     interface = wireguard_iface(profile_id)
-    if wireguard_status(profile_id)["interface"]:
-        run(IP, "link", "delete", "dev", interface)
+    # Persist intent BEFORE removing the interface so an agent crash cannot
+    # inadvertently reconnect an intentionally stopped profile.
+    set_wireguard_paused(profile_id, True)
+    try:
+        if wireguard_status(profile_id)["interface"]:
+            run(IP, "link", "delete", "dev", interface)
+    except Exception:
+        set_wireguard_paused(profile_id, False)
+        raise
     return wireguard_status(profile_id)
 
 
@@ -508,6 +590,8 @@ def wireguard_connect(profile_id, configuration):
     finally:
         if temporary:
             Path(temporary).unlink(missing_ok=True)
+    # An explicit successful Connect clears the durable operator pause.
+    set_wireguard_paused(profile_id, False)
     return wireguard_status(profile_id)
 
 
@@ -600,12 +684,13 @@ def vpn_tunnel_status(profile):
         if not data.get("connected") or not data.get("interface_name"):
             return wg
         return {"connected":True,"interface":data["interface_name"],"protocol":"openvpn",
+                "proton_pmp_authorized":bool(data.get("proton_pmp_authorized")),
                 "dns_ipv4":data.get("dns_ipv4")}
     except (ValueError,KeyError,TypeError):
         return wg
 
 
-def vpn_transition(pid, destination, dns_ipv4=None, arm_timeout=True):
+def vpn_transition(pid, destination, dns_ipv4=None, arm_timeout=True, previous_provider=None):
     """Fail-closed VPN cutover for one policy; atomic nft filters and rollback."""
     import importlib.util
     source = Path(__file__).with_name("vpngw-vpn-transaction.py")
@@ -672,6 +757,7 @@ def vpn_transition(pid, destination, dns_ipv4=None, arm_timeout=True):
         if new_vpn and arm_timeout:
             current["vpn_pending"] = {"previous": old,
                                       "previous_dns": original_runtime.get("dns_ipv4"),
+                                      "previous_provider": previous_provider,
                                       "deadline": time.time() + 180}
         else:
             current.pop("vpn_pending", None)
@@ -747,11 +833,24 @@ def revert_unconfirmed_vpn(pid):
             return {"changed":False}
         previous = pending["previous"]
         previous_dns = pending.get("previous_dns")
+        previous_provider = pending.get("previous_provider")
+        if previous_provider not in ("generic", "proton"):
+            previous_provider = "generic"
+        # This function is also invoked by an unattended systemd rollback and
+        # during boot recovery, NOT only through the API. Always withdraw old
+        # inbound mappings before changing the effective route.
+        suspend_owned_forwarding(pid)
         try:
             result = vpn_transition(pid, previous, previous_dns, arm_timeout=False)
         except Exception:
-            # If the previous VPN cannot be restored, block the host.
+            # If previous route recovery fails, block and withdraw all ingress.
             result = vpn_transition(pid, "blocked", arm_timeout=False)
+            previous_provider = "generic"
+        module = _port_reconciler()
+        if module.load_owner(BASE) == pid:
+            module.save_owner(BASE, pid, provider=previous_provider,
+                              upnp_enabled=module.load_owner_upnp(BASE))
+        reconcile_forwarding_owner()
         return result
 
 
@@ -816,6 +915,143 @@ def transition_basic(pid, target):
     return {"status": "active", "destination": target, "changed": True}
 
 
+def _port_reconciler():
+    import importlib.util
+    source = Path(__file__).with_name("vpngw-port-reconcile.py")
+    spec = importlib.util.spec_from_file_location("vpngw_port_reconcile", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _direct_igd_reconcile(owner, mode):
+    """Manage only owned upstream DIRECT mappings through verified miniupnpc."""
+    state = read_state(owner)
+    if not state or (state.get("plan") or {}).get("destination") != "direct":
+        return {"available": False, "mapping_verified": False,
+                "reason": "not_direct"}
+    import importlib.util
+    source = Path(__file__).with_name("vpngw-direct-upnp.py")
+    spec = importlib.util.spec_from_file_location("vpngw_direct_upnp", source)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    return helper.reconcile(owner=owner, state=state, mode=mode)
+
+
+def reconcile_forwarding_owner():
+    module = _port_reconciler()
+    owner = None
+    try:
+        owner = module.load_owner(BASE)
+        if owner:
+            selected_state = read_state(owner) or {}
+            selected_plan = selected_state.get("plan") or {}
+            selected_mac = selected_plan.get("registered_mac")
+            if selected_state.get("status") == "active" and selected_mac:
+                # Upgrade active legacy rules before attesting any inbound
+                # mapping; otherwise the same NIC could escape after DHCP.
+                _set_kernel_identity_guard(owner, selected_mac, selected_plan)
+        result = module.reconcile(owner, base=BASE, read_state=read_state,
+                inspect_rules=inspect_rules, identity_guard_ok=identity_guard_ok,
+                vpn_tunnel_status=vpn_tunnel_status, nft_path=NFT)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        # Never leave the previous mapped-port observation marked as active
+        # after a failed renewal or a malformed/missing provider lease.
+        try:
+            module.forward.apply(NFT, None, None)
+            status = "reconcile_failed_rules_removed"
+        except (OSError, ValueError, subprocess.SubprocessError):
+            status = "reconcile_failed_cleanup_unverified"
+        result = {"applied": False, "owner": owner, "status": status,
+                  "external_ports": {}, "provider_lease": False}
+    # Only selected DIRECT policy with verified internal DNAT may request
+    # an upstream IGD mapping. A failure never turns into WAN fallback.
+    if owner and module.load_owner_upnp(BASE):
+        state = read_state(owner) or {}
+        if (state.get("plan") or {}).get("destination") == "direct":
+            try:
+                mode = "apply" if result.get("applied") and result.get("route") == "direct" else "revoke"
+                result["upnp"] = _direct_igd_reconcile(owner, mode)
+            except (OSError, ValueError, KeyError, TypeError,
+                    subprocess.SubprocessError) as exc:
+                result["upnp"] = {"mapping_verified": False,
+                                  "reason": "upstream_igd_unavailable",
+                                  "detail": str(exc)[:180]}
+    # Operator-visible last observation is not a guarantee of upstream reachability.
+    record = {"updated_at": time.time(), **result}
+    path = BASE / "port-forward" / "runtime.json"
+    temp = BASE / "port-forward" / ".runtime.tmp"
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temp.write_text(json.dumps(record), encoding="utf-8")
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+    return record
+
+
+def suspend_owned_forwarding(policy_id):
+    """Remove and mark old DNAT invalid before any route switch."""
+    module = _port_reconciler()
+    if module.load_owner(BASE) == policy_id:
+        # Capture the old provider lease BEFORE replacing the observed state;
+        # otherwise generic providers could never revoke their old mapping.
+        state_path = BASE / "port-forward" / "runtime.json"
+        try:
+            previous_runtime = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous_runtime = {}
+        # Invalidate FIRST: a concurrent MediaHub poll must not act on a port
+        # that belongs to the previous VPN route or to DIRECT.
+        state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stamp = state_path.with_name(".runtime.suspended")
+        stamp.write_text(json.dumps({"updated_at": time.time(), "owner": policy_id,
+            "status": "route_transition_suspended", "applied": False,
+            "external_ports": {}, "provider_lease": False}), encoding="utf-8")
+        os.chmod(stamp, 0o600)
+        os.replace(stamp, state_path)
+        module.forward.apply(NFT, None, None)
+        if module.load_owner_upnp(BASE):
+            try:
+                _direct_igd_reconcile(policy_id, "revoke")
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+                # Even if the physical router is unreachable, our internal
+                # DNAT is already removed. Router leases expire separately.
+                pass
+        module.revoke_previous_lease(BASE, policy_id,
+                                     previous_runtime=previous_runtime)
+
+
+def host_rebind_preflight(pid):
+    """Observe MAC/IP while the caller holds the policy transaction lock."""
+    state = read_state(pid)
+    if not state or state.get("status") != "active" or state.get("vpn_pending"):
+        raise ValueError("A reatribuição exige uma política activa e confirmada")
+    plan = state.get("plan") or {}
+    lan = plan.get("lan")
+    if not isinstance(lan, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", lan):
+        raise ValueError("Interface LAN inválida")
+    import importlib.util
+    source = Path(__file__).with_name("vpngw-host-rebind.py")
+    spec = importlib.util.spec_from_file_location("vpngw_rebind_preflight", source)
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+    neighbors = json.loads(run(IP, "-j", "-4", "neigh", "show",
+                               "dev", lan).stdout)
+    addresses = json.loads(run(IP, "-j", "-4", "address", "show",
+                               "dev", lan).stdout)
+    occupied = set()
+    for other_path in BASE.glob("*.json"):
+        if other_path.stem == pid:
+            continue
+        other = json.loads(other_path.read_text(encoding="utf-8"))
+        # Reserve even draft/error policy addresses; changing IP may
+        # never silently capture another host's persisted identity.
+        address = (other.get("plan") or {}).get("host")
+        if address:
+            occupied.add(address)
+    return preflight.candidate_from_neighbors(
+        plan, neighbors, addresses, occupied)
+
+
 def dispatch(data):
     action = data.get("action")
     pid = ensure_id(data.get("id"))
@@ -841,10 +1077,111 @@ def dispatch(data):
         finally:
             DISCOVERY_LOCK.release()
     with LOCK, file_lock():
-        if action == "transition_basic":
-            return transition_basic(pid, data.get("destination"))
-        if action == "vpn_transition":
-            return vpn_transition(pid, data.get("destination"), data.get("dns_ipv4"))
+        if action == "port_reconcile":
+            module = _port_reconciler()
+            selected = data.get("selected")
+            if type(selected) is not bool:
+                raise ValueError("Selected must be boolean")
+            current = module.load_owner(BASE)
+            if selected and current not in (None, pid):
+                raise ValueError("Forwarding is reserved by another host")
+            if not selected and current not in (None, pid):
+                return {"applied": False, "owner": current, "unchanged": True}
+            upnp_requested = data.get("upnp_enabled", False)
+            if type(upnp_requested) is not bool:
+                raise ValueError("UPnP selection must be boolean")
+            upnp_revocation = None
+            if current == pid and module.load_owner_upnp(BASE) and (
+                    not selected or not upnp_requested):
+                # Remove locally owned DNAT before revoking physical IGD.
+                module.forward.apply(NFT, None, None)
+                try:
+                    upnp_revocation = _direct_igd_reconcile(pid, "revoke")
+                except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+                    upnp_revocation = {"mapping_verified": False,
+                                       "reason": "revoke_unverified_router_lease_expires"}
+            revocation = module.revoke_previous_lease(BASE, pid) if not selected and current == pid else None
+            module.save_owner(BASE, pid if selected else None,
+                              provider=data.get("provider", "generic"),
+                              upnp_enabled=upnp_requested if selected else False)
+            result = reconcile_forwarding_owner()
+            if revocation is not None:
+                result["lease_revocation"] = revocation
+            if upnp_revocation is not None:
+                result["upnp_revocation"] = upnp_revocation
+            return result
+        if action == "host_rebind_preflight":
+            return host_rebind_preflight(pid)
+        if action == "host_rebind_pending":
+            import importlib.util
+            source = Path(__file__).with_name("vpngw-host-rebind.py")
+            spec = importlib.util.spec_from_file_location("vpngw_rebind_pending", source)
+            pending_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(pending_module)
+            pending = pending_module.read_pending(pid)
+            return {"pending": pending is not None,
+                    "previous_ip": pending["previous_ip"] if pending else None,
+                    "candidate_ip": pending["candidate_ip"] if pending else None,
+                    "mac": pending["mac"] if pending else None}
+        if action in ("host_rebind_prepare", "host_rebind_commit"):
+            # Both phases are exclusive across API workers and independent of
+            # container lifecycle. Kernel is quarantined until SQLite commits.
+            import importlib.util
+            source = Path(__file__).with_name("vpngw-host-rebind-transaction.py")
+            spec = importlib.util.spec_from_file_location("vpngw_rebind_transaction", source)
+            rebind = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(rebind)
+            mac = data.get("mac")
+            new_ip = data.get("new_ip")
+            if not isinstance(mac, str) or not re.fullmatch(
+                    r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac.lower()):
+                raise ValueError("MAC de reatribuição inválido")
+            if not isinstance(new_ip, str):
+                raise ValueError("IPv4 de reatribuição inválido")
+            from types import SimpleNamespace
+            runtime = SimpleNamespace(**globals())
+            if action == "host_rebind_prepare":
+                old_ip = data.get("old_ip")
+                if not isinstance(old_ip, str):
+                    raise ValueError("IPv4 anterior inválido")
+                return rebind.prepare(runtime, pid,
+                                      old_ip=old_ip, new_ip=new_ip, mac=mac.lower())
+            return rebind.commit(runtime, pid,
+                                 new_ip=new_ip, mac=mac.lower())
+        if action == "port_owner":
+            return {"owner": _port_reconciler().load_owner(BASE)}
+        if action == "port_status":
+            try:
+                return json.loads((BASE / "port-forward" / "runtime.json").read_text())
+            except (OSError, ValueError):
+                return {"applied": False, "status": "not_verified"}
+        if action in ("transition_basic", "vpn_transition"):
+            previous_provider = _port_reconciler().load_owner_provider(BASE)
+            previous_upnp = _port_reconciler().load_owner_upnp(BASE)
+            suspend_owned_forwarding(pid)
+            try:
+                if action == "transition_basic":
+                    result = transition_basic(pid, data.get("destination"))
+                else:
+                    result = vpn_transition(pid, data.get("destination"), data.get("dns_ipv4"),
+                                            previous_provider=previous_provider)
+                module = _port_reconciler()
+                if module.load_owner(BASE) == pid:
+                    # This applies to VPN->VPN, VPN->DIRECT/BLOCKED, DIRECT->VPN
+                    # and DIRECT<->BLOCKED; never retain the old provider.
+                    module.save_owner(BASE, pid, provider=data.get("provider", "generic"),
+                                      upnp_enabled=previous_upnp)
+                reconcile_forwarding_owner()
+                return result
+            except Exception:
+                # The route transaction has its own rollback; only restore a
+                # port once that effective route has been independently checked.
+                module = _port_reconciler()
+                if module.load_owner(BASE) == pid:
+                    module.save_owner(BASE, pid, provider=previous_provider,
+                                      upnp_enabled=previous_upnp)
+                reconcile_forwarding_owner()
+                raise
         if action == "vpn_confirm":
             return confirm_vpn(pid)
         if action == "vpn_revert":
@@ -947,6 +1284,9 @@ def dispatch(data):
                                            interface, runtime["dns_ipv4"], True)
                 module.apply_filter(filt)
                 module.ensure_rule(route)
+                if state["plan"].get("registered_mac"):
+                    _set_kernel_identity_guard(
+                        pid, state["plan"]["registered_mac"], state["plan"])
                 probe = module.observed(state["plan"]["host"], state["plan"]["lan"])
                 if probe.returncode or ("dev " + interface) not in probe.stdout:
                     raise ValueError("VPN religada, encaminhamento do host não recuperado")
@@ -1014,6 +1354,12 @@ def dispatch(data):
         if action == "preflight":
             return {"status": "validated", "plan": validate(data["host_ip"], data["destination"], data["network"])}
         if action == "purge_host":
+            # Remove any owned DNAT before deleting a host's authoritative state.
+            port_module = _port_reconciler()
+            if port_module.load_owner(BASE) == pid:
+                port_module.revoke_previous_lease(BASE, pid)
+                port_module.save_owner(BASE, None)
+                reconcile_forwarding_owner()
             # Called only after the API has fully revoked the host policy.
             state = read_state(pid)
             if state and state.get("status") in ("active", "pending"):
@@ -1036,7 +1382,10 @@ def dispatch(data):
                 raise ValueError("Host state not fully purged")
             return {"purged": True}
         if action == "rollback":
-            return rollback(pid, force=True)
+            suspend_owned_forwarding(pid)
+            result = rollback(pid, force=True)
+            reconcile_forwarding_owner()
+            return result
         if action == "confirm":
             state = read_state(pid)
             if not state or state["status"] != "pending" or time.time() >= state["deadline"]:
@@ -1092,8 +1441,115 @@ class Handler(socketserver.StreamRequestHandler):
         self.wfile.write((json.dumps(result) + "\n").encode())
 
 
+def reconcile_returned_vpn_routes():
+    """Restore routes lost when a confirmed tunnel disappears and returns."""
+    with LOCK, file_lock():
+        for path in BASE.glob("*.json"):
+            try:
+                state = json.loads(path.read_text())
+                plan = state.get("plan", {})
+                target = plan.get("destination")
+                runtime = state.get("vpn_runtime") or {}
+                interface = runtime.get("interface")
+                reason = str(state.get("reason") or "")
+                retryable = (
+                    state.get("status") == "error"
+                    and reason in (
+                        "Recuperação após reinício falhou: Interface WAN/LAN mudou desde a confirmação",
+                        "Recuperação após reinício falhou: Docker forwarding indisponível",
+                    )
+                )
+                if ((state.get("status") != "active" and not retryable)
+                        or state.get("vpn_pending")
+                        or not target or target in ("direct", "blocked") or not interface):
+                    continue
+                route = subprocess.run(
+                    [IP, "-j", "-4", "route", "get", "1.1.1.1", "from", plan["host"], "iif", plan["lan"]],
+                    capture_output=True, text=True, timeout=5)
+                if (not retryable and route.returncode == 0 and any(
+                        item.get("dev") == interface for item in json.loads(route.stdout))):
+                    continue
+                # Do not reconnect an intentionally stopped profile or remove its guard.
+                observed = vpn_tunnel_status(target)
+                if observed.get("connected") and observed.get("interface") == interface:
+                    recover_active_policy(path.stem, state)
+            except Exception:
+                # A failed observation must never relax a client's existing guard.
+                continue
+
+
+def reconcile_missing_wireguard_profiles():
+    """Reconnect assigned WireGuard profiles after unexpected interface loss.
+
+    Never override an explicit Disconnect, a pending cutover or an OpenVPN
+    profile; the host's unreachable route and nft guard remain installed.
+    """
+    root_name = os.environ.get("VPNGW_WG_PROFILE_DIR")
+    if not root_name:
+        return
+    root = Path(root_name)
+    if root.is_symlink() or not root.is_dir():
+        return
+    with LOCK, file_lock():
+        targets = set()
+        for path in BASE.glob("*.json"):
+            try:
+                state = json.loads(path.read_text())
+                plan = state.get("plan") or {}
+                profile = plan.get("destination")
+                runtime = state.get("vpn_runtime") or {}
+                if (state.get("status") != "active" or state.get("vpn_pending")
+                        or not profile or profile in ("direct", "blocked")):
+                    continue
+                profile = ensure_id(profile)
+                if (runtime.get("interface") != wireguard_iface(profile)
+                        or wireguard_paused_path(profile).exists()):
+                    continue
+                targets.add(profile)
+            except (OSError, ValueError, TypeError):
+                continue
+        for profile in sorted(targets):
+            try:
+                if wireguard_status(profile).get("interface"):
+                    WG_RETRY_AFTER.pop(profile, None)
+                    continue
+                now = time.monotonic()
+                if now < WG_RETRY_AFTER.get(profile, 0):
+                    continue
+                WG_RETRY_AFTER[profile] = now + 30
+                config = root / (profile + ".conf")
+                if (not config.is_file() or config.is_symlink()
+                        or not 0 < config.stat().st_size <= 65536):
+                    continue
+                wireguard_connect(profile, config.read_text(encoding="utf-8"))
+                # Route restoration is handled by the existing periodic
+                # reconciler, after the recreated tunnel becomes observable.
+            except (OSError, ValueError, subprocess.SubprocessError):
+                continue
+
+
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
+    _next_reconcile = 0.0
+    _next_port_reconcile = 0.0
+
+    def service_actions(self):
+        now = time.monotonic()
+        if now >= self._next_reconcile:
+            self._next_reconcile = now + 5
+            reconcile_missing_wireguard_profiles()
+            reconcile_returned_vpn_routes()
+        if now >= self._next_port_reconcile:
+            self._next_port_reconcile = now + 45
+            def refresh_forward():
+                with LOCK, file_lock():
+                    try:
+                        reconcile_forwarding_owner()
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        # Never install fallback rules on a failed VPN probe.
+                        pass
+            threading.Thread(target=refresh_forward, daemon=True,
+                             name="vpngw-port-forward-reconcile").start()
 
 
 def validate_saved_plan(plan):
@@ -1115,6 +1571,17 @@ def validate_saved_plan(plan):
             raise ValueError("Gateway WAN alterado desde a confirmação")
     if not exists_chain("DOCKER-USER"):
         raise ValueError("Docker forwarding indisponível")
+
+
+def complete_recovered_vpn_policy(pid, state):
+    """Only restore an eligible error state after verified VPN route recovery."""
+    if state.get("status") == "error":
+        restored = {**state, "status": "active", "applied": True}
+        restored.pop("reason", None)
+        sync_boot_policy(pid, restored)
+        save_state(pid, restored)
+    else:
+        sync_boot_policy(pid, state)
 
 
 def recover_active_policy(pid, state):
@@ -1151,14 +1618,17 @@ def recover_active_policy(pid, state):
                     raise ValueError("Recuperação VPN sem rota efectiva")
                 if not tunnel_present and probe.returncode == 0:
                     raise ValueError("VPN desligada mas rota DIRECT acessível")
-                sync_boot_policy(pid, state)
+                complete_recovered_vpn_policy(pid, state)
                 return
             mac = state["plan"].get("registered_mac")
             if not inspect_rules(pid) or not identity_guard_ok(pid, mac):
                 remove_rules(pid)
                 install_rules(state["plan"], pid)
-            if not inspect_rules(pid) or not identity_guard_ok(pid, mac):
-                raise ValueError("Regras de política não confirmadas após reposição")
+            if mac:
+                _set_kernel_identity_guard(pid, mac, state["plan"])
+            if (not inspect_rules(pid) or not identity_guard_ok(pid, mac)
+                    or (mac and not renumber_guard_ok(pid, mac, state["plan"]))):
+                raise ValueError("Regras IP/MAC não confirmadas após reposição")
         except Exception as exc:
             # Never remove a surviving VPN guard on recovery failure.
             if state["plan"]["destination"] in ("direct", "blocked"):
@@ -1181,7 +1651,9 @@ def restore_boot_vpn_profiles():
             state = json.loads(path.read_text())
             dest = state.get("plan", {}).get("destination")
             if state.get("status") == "active" and dest not in ("direct", "blocked"):
-                profiles.add(ensure_id(dest))
+                profile = ensure_id(dest)
+                if not wireguard_paused_path(profile).exists():
+                    profiles.add(profile)
         except (ValueError, OSError):
             continue
     for profile in sorted(profiles):
@@ -1230,7 +1702,19 @@ def serve():
         state=json.loads(path.read_text())
         if state.get("status")=="active" and state.get("vpn_pending"):
             revert_unconfirmed_vpn(path.stem)
+    # A crashed NAT-PMP probe may have left a temporary /32 host route.
+    # Remove only routes journalled by this controller before recovering policies.
+    try:
+        _port_reconciler().natpmp.cleanup_stale_route()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
     restore_boot_vpn_profiles()
+    # Boot-time forwarding is rebuilt only from the saved owner and verified route.
+    with LOCK, file_lock():
+        try:
+            reconcile_forwarding_owner()
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
     with Server(SOCKET, Handler) as server:
         os.chmod(SOCKET, 0o600)
         server.serve_forever()
