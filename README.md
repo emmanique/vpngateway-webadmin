@@ -16,7 +16,10 @@
 
 <p align="center"><img src="screenshots/overview.png" width="920" alt="Gateway VPN Multi WebAdmin overview"></p>
 
-## Release 1.0.3
+## Release 1.0.4
+
+**Installation fix:** `start.sh` is now executable directly after cloning or extracting the release archive. This is a corrective release of 1.0.3, with no changes to the VPN dataplane.
+
 
 **VPN Gateway Multi 1.0.3** prepares per-host UPnP/NAT-PMP port ownership, dynamic Proton port reconciliation, OpenVPN/DNS robustness, independent MediaHub Stremio port synchronisation and a reusable local CI workflow.
 
