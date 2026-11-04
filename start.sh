@@ -44,7 +44,7 @@ if ((!CHECK)); then
   systemctl enable --now docker.service
 fi
 if [[ -z "$LAN_IFACE" ]]; then
-  LAN_IFACE="$(ip -4 -j route show default | python3 -c 'import json,sys; a={r.get("dev") for r in json.load(sys.stdin) if r.get("dev")}; print(next(iter(a)) if len(a)==1 else "")')"
+  LAN_IFACE="$(python3 scripts/select-install-lan.py)"
 fi
 [[ -n "$LAN_IFACE" ]] || { echo "Interface LAN ambígua; indique --lan-interface" >&2; exit 1; }
 [[ "$LAN_IFACE" =~ ^[a-zA-Z0-9_.-]{1,15}$ ]] || { echo "Interface inválida" >&2; exit 1; }
@@ -121,6 +121,9 @@ else
   VPNGW_LAN_INTERFACE="$LAN_IFACE" sh scripts/vpngw-pihole-dns-acl.sh
 fi
 systemctl enable vpngw-pihole-dns-acl.service >/dev/null
+# Start through systemd too, so a previous failed invocation is not left stale.
+systemctl restart vpngw-pihole-dns-acl.service
+systemctl is-active --quiet vpngw-pihole-dns-acl.service
 export VPNGW_LAN_IPV4="$LAN_IPV4"
 docker compose --env-file deploy/.env "${files[@]}" up -d --build
 # Resolve the actual data mount so reboot recovery does not depend on a container name.

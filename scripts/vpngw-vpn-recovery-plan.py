@@ -6,7 +6,7 @@ import ipaddress
 import re
 
 IFACE = re.compile(r"[A-Za-z0-9_.-]{1,15}\Z")
-VPN = re.compile(r"wg[a-f0-9]{11}\Z")
+VPN = re.compile(r"(?:wg[a-f0-9]{11}|tun[a-f0-9]{10})\Z")
 MAC = re.compile(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\Z")
 
 def validate(config: dict) -> dict:
