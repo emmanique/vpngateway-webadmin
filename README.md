@@ -16,13 +16,13 @@
 
 <p align="center"><img src="screenshots/overview.png" width="920" alt="Gateway VPN Multi WebAdmin overview"></p>
 
-## Release 1.0.3 — release candidate
+## Release 1.0.3
 
 **VPN Gateway Multi 1.0.3** prepares per-host UPnP/NAT-PMP port ownership, dynamic Proton port reconciliation, OpenVPN/DNS robustness, independent MediaHub Stremio port synchronisation and a reusable local CI workflow.
 
-**Validation:** local CI is the project's approved quality gate while GitHub-hosted Actions is blocked by usage limits. The selected five jobs cover API, bilingual WebAdmin, VPN and WebAdmin images, and isolated Linux dataplane.
+**Validation:** local QA recorded 486 passing pytest tests and 77 passing subtests. The project owner accepted the real OpenVPN outage/recovery, client reboot/recovery and external-port reachability checks. GitHub-hosted Actions remains blocked by account spending limits; no passing hosted CI is claimed.
 
-**Scope and safeguards:** standard DNS remains routed to the selected VPN provider. The route-aware Pi-hole central DNS cutover is experimental and opt-in. NAT-PMP lease verification does not prove Internet peer reachability. This branch remains a release candidate until the exact commit and public packages pass final checks.
+**Scope and safeguards:** standard DNS remains routed to the selected VPN provider. The route-aware Pi-hole central DNS cutover is experimental and opt-in. NAT-PMP lease verification does not prove Internet peer reachability. Functional acceptance of OpenVPN recovery, client reboot/recovery, and external VPN port reachability was confirmed by the project owner. Published distribution packages and cryptographic manifests are a separate release-delivery gate.
 
 ## Features
 
