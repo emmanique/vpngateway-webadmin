@@ -1,0 +1,16 @@
+[Unit]
+Description=Reconcile selected Gateway VPN host NAT-PMP port into MediaHub Docker Compose
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+ConditionPathExists=/etc/mediahub/port-sync.conf
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/mediahub/port-sync.conf
+ExecStart=/usr/bin/python3 /usr/local/libexec/mediahub-gateway-port-sync.py
+TimeoutStartSec=150
+NoNewPrivileges=true
+PrivateTmp=true

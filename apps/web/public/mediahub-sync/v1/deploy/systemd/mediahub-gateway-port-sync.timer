@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll verified VPN Gateway selected-host port every 15 seconds
+
+[Timer]
+OnBootSec=40s
+OnUnitInactiveSec=15s
+AccuracySec=3s
+Persistent=false
+Unit=mediahub-gateway-port-sync.service
+
+[Install]
+WantedBy=timers.target

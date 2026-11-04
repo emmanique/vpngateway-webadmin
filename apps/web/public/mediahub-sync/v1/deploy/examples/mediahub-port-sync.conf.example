@@ -1,0 +1,18 @@
+# Explicit opt-in; do not enable until the VPN Gateway has deployed
+# the selected_host + lease-aware /api/v1/port-forward/desired endpoint.
+MEDIAHUB_PORT_SYNC_ENABLE=0
+# Stable host policy ID selected under Gateway -> Hosts and routes -> Edit host
+MEDIAHUB_PORT_SYNC_POLICY_ID=stremio
+# Registered physical MediaHub MAC, NOT a fixed IP.
+MEDIAHUB_PORT_SYNC_HOST_MAC=aa:bb:cc:dd:ee:ff
+# The server discovers its gateway from: ip -j -4 route get 1.1.1.1 from <current-host-ip>.
+# NO fixed Gateway IP or hostname. TLS CA must authenticate the discovered IP
+# with a matching certificate IP SAN (never disable certificate validation).
+MEDIAHUB_PORT_SYNC_API_PORT=9443
+MEDIAHUB_PORT_SYNC_API_PATH=/api/v1/port-forward/desired
+MEDIAHUB_PORT_SYNC_ROUTE_PROBE=1.1.1.1
+MEDIAHUB_PORT_SYNC_CA_FILE=/etc/mediahub/gateway-ca.pem
+# Distinct 0600 token from the Gateway's dedicated read-only host service.
+MEDIAHUB_PORT_SYNC_TOKEN_FILE=/etc/mediahub/gateway-port-sync.token
+# Absolute path of the trusted MediaHub Stremio Docker Compose directory.
+MEDIAHUB_PORT_SYNC_COMPOSE_DIR=/root/stremio-libtorrent-server

@@ -1,11 +1,11 @@
 {
   "name": "vpn-gateway-web",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "npm run i18n:check && tsc -b && vite build",
+    "build": "node tools/generate-mediahub-sync-manifest.mjs && npm run i18n:check && tsc -b && vite build",
     "i18n:check": "node tools/check-i18n.mjs"
   },
   "dependencies": {
