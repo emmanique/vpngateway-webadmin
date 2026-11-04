@@ -22,7 +22,7 @@
 
 **Validation:** local CI is the project's approved quality gate while GitHub-hosted Actions is blocked by usage limits. The selected five jobs cover API, bilingual WebAdmin, VPN and WebAdmin images, and isolated Linux dataplane.
 
-**Scope and safeguards:** standard DNS remains routed to the selected VPN provider. The route-aware Pi-hole central DNS cutover is experimental and opt-in. NAT-PMP lease verification does not prove Internet peer reachability. This branch is a release candidate until its exact commit and public packages pass final checks.
+**Scope and safeguards:** standard DNS remains routed to the selected VPN provider. The route-aware Pi-hole central DNS cutover is experimental and opt-in. NAT-PMP lease verification does not prove Internet peer reachability. This branch remains a release candidate until the exact commit and public packages pass final checks.
 
 ## Features
 
@@ -169,7 +169,9 @@ New static labels require English mappings; duplicate legacy translations and PT
 
 ## Release quality checks
 
-Five local CI jobs validate the DEV source: API, bilingual frontend, WebAdmin/VPN container builds and isolated Linux dataplane. The CI runner and fault-injection scripts remain in DEV, not in this public distribution.\n\nThe default installer rebuilds the containers from this source and preserves persistent volumes. The read-only MediaHub status endpoint is **optional** and requires TLS and token configuration; the MediaHub job is installed on the separate Linux host. These integrations are not implicitly activated by an upgrade.
+Five local CI jobs validate the DEV source: API, bilingual frontend, WebAdmin/VPN container builds and isolated Linux dataplane. The CI runner and fault-injection scripts remain in DEV, not in this public distribution.
+
+The default installer rebuilds the containers from this source and preserves persistent volumes. The read-only MediaHub status endpoint is **optional** and requires TLS and token configuration; the MediaHub job is installed on the separate Linux host. These integrations are not implicitly activated by an upgrade.
 
 Before upgrading, export a configuration backup; verify external DNS, host MAC identity, VPN fail-closed behaviour, selected port mappings and a tested rollback. See the [DEV QA record](https://github.com/emmanique/vpngateway-webamin-dev/blob/main/docs/qa/2026-11-04-vpn-dns-validation.md).
 
