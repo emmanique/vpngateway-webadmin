@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nginx iproute2 
 WORKDIR /app
 COPY apps/api/requirements.txt /app/requirements.txt
 RUN pip install --timeout 180 --retries 10 --no-cache-dir -r /app/requirements.txt
-COPY apps/api/main.py apps/api/system_maintenance.py /app/
+COPY apps/api/main.py apps/api/system_maintenance.py apps/api/port_forward_plan.py apps/api/rebind_watcher.py /app/
 COPY apps/api/host_transition_plan.py /app/host_transition_plan.py
 COPY scripts/network-topology.py scripts/multi-host-plan.py /app/
 COPY --from=frontend /build/dist/ /usr/share/nginx/html/

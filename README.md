@@ -16,6 +16,14 @@
 
 <p align="center"><img src="screenshots/overview.png" width="920" alt="Gateway VPN Multi WebAdmin overview"></p>
 
+## Release 1.0.3 — release candidate
+
+**VPN Gateway Multi 1.0.3** prepares per-host UPnP/NAT-PMP port ownership, dynamic Proton port reconciliation, OpenVPN/DNS robustness, independent MediaHub Stremio port synchronisation and a reusable local CI workflow.
+
+**Validation:** local CI is the project's approved quality gate while GitHub-hosted Actions is blocked by usage limits. The selected five jobs cover API, bilingual WebAdmin, VPN and WebAdmin images, and isolated Linux dataplane.
+
+**Scope and safeguards:** standard DNS remains routed to the selected VPN provider. The route-aware Pi-hole central DNS cutover is experimental and opt-in. NAT-PMP lease verification does not prove Internet peer reachability. This branch is a release candidate until its exact commit and public packages pass final checks.
+
 ## Features
 
 | Area | Capabilities |
@@ -30,6 +38,8 @@
 | **Monitoring** | Tunnel handshakes, public IPv4 probes, route/firewall diagnostics, traffic accounting and VPN event logs. |
 | **Backup and restore** | Encrypted AES-256-GCM export, compatibility preflight, interface mapping and confirmed restoration. |
 | **Factory defaults** | Explicitly reset managed VPN/host state while retaining the administrative network configuration. |
+| **Port forwarding** | Selected-host NAT-PMP/UPnP mapping reconciled when switching VPN, DIRECT or BLOCKED policies. |
+| **MediaHub sync** | Optional read-only LAN HTTPS status endpoint and independent Linux systemd timer synchronise Stremio with the provider's external TCP/UDP port. |
 | **PT/EN WebAdmin** | English and Portuguese UI; static translation regression check included in the build. |
 | **Linux installer** | Automated `start.sh` deployment using Docker Compose and persistent systemd host agents. |
 
@@ -95,8 +105,8 @@ Screenshots were captured from the running WebAdmin in English and anonymized fo
 Linux with systemd and administrative access, a private LAN IPv4 address, and clients configured to use this machine as their IPv4 gateway. Debian/Ubuntu systems can have missing dependencies installed automatically. Docker Engine, Compose v2, WireGuard, OpenVPN, nftables, iproute2, Python 3 and OpenSSL are used.
 
 ```bash
-git clone https://github.com/emmanique/vpngateway-webamin-dev.git
-cd vpngateway-webamin-dev
+git clone https://github.com/emmanique/vpngateway-webadmin.git
+cd vpngateway-webadmin
 ./start.sh --check
 sudo ./start.sh
 ```
@@ -157,6 +167,12 @@ npm run build
 
 New static labels require English mappings; duplicate legacy translations and PT/EN key mismatches fail the check. Dynamic messaging still merits UI-level regression tests in both languages.
 
+## Release quality checks
+
+Five local CI jobs validate the DEV source: API, bilingual frontend, WebAdmin/VPN container builds and isolated Linux dataplane. The CI runner and fault-injection scripts remain in DEV, not in this public distribution.\n\nThe default installer rebuilds the containers from this source and preserves persistent volumes. The read-only MediaHub status endpoint is **optional** and requires TLS and token configuration; the MediaHub job is installed on the separate Linux host. These integrations are not implicitly activated by an upgrade.
+
+Before upgrading, export a configuration backup; verify external DNS, host MAC identity, VPN fail-closed behaviour, selected port mappings and a tested rollback. See the [DEV QA record](https://github.com/emmanique/vpngateway-webamin-dev/blob/main/docs/qa/2026-11-04-vpn-dns-validation.md).
+
 ## Project structure
 
 | Path | Purpose |
@@ -185,12 +201,7 @@ MIT — see [LICENSE](LICENSE).
 
 </div>
 
-## Release 1.0.2 validation
+## Release 1.0.3 compatibility
 
-Version 1.0.2 includes resilient Python/npm dependency downloads, complete Nginx packaging, passwordless LAN Pi-hole administration, confirmed per-host boot guards and recovery of stored VPN profiles after reboot. QA covered 32 directed route transitions, a 75-second provider-connectivity outage, encrypted backup/restore, factory defaults and interface remapping.
+Upgrade from 1.0.2 retains persistent configuration when installed through the normal `start.sh` workflow. The provider's public NAT-PMP port may change; the external MediaHub synchroniser must validate each lease and adjust its own service. Do not publish provider credentials or local certificate keys.
 
-### DNS scope
-
-Managed IPv4 DNS queries from VPN clients are redirected to the VPN provider resolver. DoH and DoT traffic follows the assigned VPN route but bypasses Pi-hole filtering. The gateway uses its own system resolver for control-plane lookups, including public-IP checks. IPv6 forwarding is blocked for managed VPN clients.
-
-Authorizing a changed host MAC now synchronizes the basic firewall guard, VPN guard and persistent boot protection, with rollback on failure.

@@ -2,7 +2,9 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from ipaddress import ip_address, ip_network
 from typing import Literal
-from threading import RLock, Lock
+from threading import RLock, Lock, Thread
+import logging
+import time
 import sqlite3
 import json
 import os
@@ -17,7 +19,7 @@ from datetime import datetime, timezone
 from contextlib import closing
 from pathlib import Path
 
-app = FastAPI(title="VPN Gateway Manager API", version="1.0.2")
+app = FastAPI(title="VPN Gateway Manager API", version="1.0.3")
 _lock = RLock()
 _discovery_lock = Lock()
 _connections = {}
@@ -62,6 +64,192 @@ class Policy(BaseModel):
     destination: str = "direct"
     failure_mode: Literal["block", "direct"] = "block"
     registered_mac: str | None = None
+
+class HostPortSettings(BaseModel):
+    upnp_enabled: bool = True
+    port_forward_enabled: bool = False
+
+def _natpmp_provider_for_route(destination: str) -> str:
+    profile = _connections.get(destination) if destination not in ('direct', 'blocked') else None
+    name = str((profile or {}).get('provider') or '').strip().casefold()
+    return 'proton' if name in ('proton', 'proton vpn', 'protonvpn') else 'generic'
+
+
+def _port_forward_desired():
+    from port_forward_plan import build_port_forward_plan, PortForwardPlanError
+    try:
+        return build_port_forward_plan(_policies)
+    except PortForwardPlanError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+def _clear_forwarding_for_maintenance():
+    """Stop owned NAT/lease before replacing or deleting the policy database."""
+    observed = _policy_agent_call("port_owner", "port-forward", {})
+    owner = observed.get("owner")
+    if owner:
+        result = _policy_agent_call("port_reconcile", owner, {"selected": False})
+        if result.get("applied") or result.get("owner") is not None:
+            raise HTTPException(503, "Port forwarding cleanup not verified")
+    return {"owner": None}
+
+
+@app.get("/api/v1/port-forward/desired")
+def port_forward_desired():
+    """Desired state ONLY: this does not imply actual NAT/UPnP readiness."""
+    with _lock:
+        desired = _port_forward_desired()
+        selected = desired.get("forwarding")
+        owners = [pid for pid, item in _policies.items() if item.get("port_forward_enabled")]
+        owner = owners[0] if owners else "port-forward"
+        try:
+            observed = _policy_agent_call("port_status", owner, {})
+        except HTTPException as exc:
+            observed = {"status": "agent_unavailable", "applied": False,
+                        "error": str(exc.detail)}
+        now = datetime.now(timezone.utc).timestamp()
+        issued = observed.get("updated_at")
+        age = now - issued if type(issued) in (float, int) else float("inf")
+        lease_expiry = observed.get("lease_expires_at")
+        provider_lease_current = bool(
+            type(lease_expiry) in (float, int)
+            and type(issued) in (float, int)
+            and issued <= now < lease_expiry
+        )
+        external = observed.get("external_ports") or {}
+        tcp, udp = external.get("tcp"), external.get("udp")
+        dual_protocol = (type(tcp) is int and type(udp) is int
+                         and 1 <= tcp <= 65535 and tcp == udp)
+        route = _policies[owner].get("destination") if owners else "blocked"
+        mapping_current = bool(
+            dual_protocol and (
+                (route == "direct" and tcp == 6881 and not observed.get("provider_lease"))
+                or (route not in ("direct", "blocked") and
+                    observed.get("provider_lease") and provider_lease_current)
+            )
+        )
+        verified = bool(observed.get("status") == "nat_rules_verified"
+                        and observed.get("applied") and 0 <= age <= 95
+                        and owners and observed.get("owner") == owner
+                        and observed.get("route") == route and mapping_current)
+        # Expired/unknown provider leases must not be returned as current ports.
+        if observed.get("provider_lease") and not provider_lease_current:
+            observed = {**observed, "external_ports": {}, "lease_state": "expired_or_unverified"}
+        # Desired plans cannot guess VPN-assigned ports. Once the agent has
+        # verified a current TCP/UDP lease and DNAT, expose that mapping in
+        # the response rather than retaining a stale "mapping_incomplete"
+        # planner status alongside rules_applied=True.
+        if verified and route not in ("direct", "blocked"):
+            from port_forward_plan import build_port_forward_plan
+            desired = build_port_forward_plan(
+                _policies, vpn_external_ports={route: {"tcp": tcp, "udp": udp}})
+            desired["status"] = "nat_rules_verified"
+        selected_host = None
+        if owners:
+            policy = _policies[owner]
+            selected_host = {"policy_id": owner,
+                             "registered_mac": policy.get("registered_mac"),
+                             "host_ip": policy.get("host_ip"),
+                             "route": policy.get("destination")}
+        return {**desired, "rules_applied": verified,
+                "external_reachability_verified": False,
+                "upnp_available": bool(verified and route == "direct"
+                     and (observed.get("upnp") or {}).get("mapping_verified")),
+                "selected_host": selected_host,
+                "runtime": observed}
+
+@app.get("/api/v1/upnp/capability")
+def upnp_capability():
+    """Report eligibility, never misrepresent a non-running IGD as available."""
+    with _lock:
+        direct = []
+        unsupported = {}
+        for pid, p in _policies.items():
+            if not p.get("upnp_enabled", True):
+                continue
+            destination = p.get("destination", "blocked")
+            if destination != "direct":
+                unsupported[pid] = ("blocked_route" if destination == "blocked"
+                                    else "vpn_provider_mapping_required")
+            elif p.get("status") != "active" or not p.get("registered_mac"):
+                unsupported[pid] = "identity_or_route_not_confirmed"
+            else:
+                try:
+                    observed = _policy_agent_call("status", pid, p)
+                    if not (observed.get("status") == "active"
+                            and observed.get("applied")
+                            and observed.get("plan", {}).get("destination") == "direct"
+                            and observed.get("plan", {}).get("host") == p["host_ip"]
+                            and observed.get("identity_guard_verified")):
+                        unsupported[pid] = "kernel_policy_not_confirmed"
+                    else:
+                        direct.append({"policy_id": pid, "host_ip": p["host_ip"]})
+                except HTTPException:
+                    unsupported[pid] = "policy_agent_unavailable"
+        # miniupnpc is an upstream IGD client. Do not confuse a confirmed
+        # physical-router mapping with a locally running miniupnpd server.
+        upstream = bool(port_forward_desired().get("upnp_available"))
+        return {"igd_running": False, "igd_ready": False,
+                "upstream_igd_mapping_verified": upstream,
+                "eligible_direct": direct, "unsupported": unsupported,
+                "status": "upstream_igd_verified" if upstream else "upstream_igd_unverified",
+                "lan_igd_server": "not_enabled",
+                "vpn_mapping": "provider_natpmp_or_pcp_only"}
+
+
+@app.put("/api/v1/policies/{policy_id}/port-settings")
+def update_host_port_settings(policy_id: str, data: HostPortSettings, request: Request):
+    """Persist exclusive intent; never misrepresent saved settings as live NAT rules."""
+    _require_policy_admin(request)
+    global _revision
+    with _lock:
+        # SQLite write lock guarantees exclusivity across multiple API workers.
+        with closing(_connect()) as db:
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                persisted = {pid: json.loads(payload) for pid, payload in
+                             db.execute("SELECT id,payload FROM policies")}
+                previous = persisted.get(policy_id)
+                if previous is None:
+                    raise HTTPException(404, "Host policy not found")
+                owners = [pid for pid, item in persisted.items()
+                          if pid != policy_id and item.get("port_forward_enabled", False)]
+                if data.port_forward_enabled and owners:
+                    raise HTTPException(409, "Port 6881 is already reserved by another host: " + owners[0])
+                candidate = {**previous, **data.model_dump()}
+                # Reserve the forwarding privilege for a verified stable host
+                # identity. The IPv4 address is a mutable locator, not the owner.
+                if data.port_forward_enabled and not previous.get("registered_mac"):
+                    raise HTTPException(409, "Registe e valide primeiro o MAC do host antes de activar o encaminhamento")
+                from port_forward_plan import build_port_forward_plan, PortForwardPlanError
+                try:
+                    build_port_forward_plan({**persisted, policy_id: candidate})
+                except PortForwardPlanError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                db.execute("UPDATE policies SET payload=? WHERE id=?",
+                           (json.dumps(candidate), policy_id))
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        _policies[policy_id] = candidate
+        _revision += 1
+        try:
+            runtime = _policy_agent_call("port_reconcile", policy_id,
+                                         {"selected": candidate["port_forward_enabled"],
+                                          "provider": _natpmp_provider_for_route(candidate.get("destination", "direct")),
+                                          "upnp_enabled": bool(candidate.get("upnp_enabled", False))})
+        except HTTPException as exc:
+            # Configuration remains saved for boot/periodic recovery; never claim
+            # that a failed privileged operation changed live networking.
+            runtime = {"applied": False, "status": "pending",
+                       "error": str(exc.detail)}
+        return {"policy_id": policy_id, "host_identity": {"policy_id": policy_id,
+                    "registered_mac": candidate.get("registered_mac"),
+                    "current_ip": candidate.get("host_ip")},
+                "upnp_enabled": candidate["upnp_enabled"],
+                "port_forward_enabled": candidate["port_forward_enabled"],
+                "applied": bool(runtime.get("applied")),
+                "upnp_available": False, "runtime": runtime}
 
 @app.get("/health")
 def health():
@@ -269,6 +457,18 @@ def _restore_preflight(restored):
                 subnets.append(observed_subnet)
         except ValueError:
             issues.append('CIDR LAN inválido em ' + str(name))
+    # Restored snapshots cannot bypass exclusive port reservation.
+    port_owners=[]
+    for row in restored.get('policies',[]):
+        try:
+            stored=json.loads(row['payload'])
+            if stored.get('port_forward_enabled'):
+                port_owners.append(stored.get('id') or str(row.get('id')))
+        except (TypeError, ValueError, KeyError):
+            issues.append('Política de host inválida no backup')
+    if len(port_owners)>1:
+        issues.append('Backup contém vários hosts com encaminhamento exclusivo 6881: '
+                      + ', '.join(port_owners))
     seen=set()
     for row in restored.get('policies',[]):
         policy=json.loads(row['payload']); host=policy.get('host_ip')
@@ -334,6 +534,7 @@ def system_restore(data: MaintenancePayload, request: Request):
             state = _wireguard_agent_call(item['id'],status_action)
             if state.get('tunnel_active') or state.get('connected'):
                 raise HTTPException(409,'Desligue todas as VPNs antes do restauro')
+        _clear_forwarding_for_maintenance()
         # Strict replacement, including removal of profiles absent from the backup.
         incoming_ids = {row['id'] for row in restored['connections'] if json.loads(row['payload']).get('protocol') == 'openvpn'}
         old_ids = {ident for ident, profile in _connections.items() if profile.get('protocol') == 'openvpn'}
@@ -382,6 +583,7 @@ def system_defaults(data: MaintenancePayload, request: Request):
             raise HTTPException(409,'Estado residual no agente: '+', '.join(p['id'] for p in inventory['policies'])+'. Elimine as políticas pelos fluxos normais antes do reset.')
         if _policies:
             raise HTTPException(409,'Remova primeiro os hosts configurados.')
+        _clear_forwarding_for_maintenance()
         # Prepare rollback copies before making any destructive change.
         vpn_ids = sorted(ident for ident, item in _connections.items() if item.get('protocol') == 'openvpn')
         old_openvpn = {ident: _wireguard_agent_call(ident, 'openvpn_backup_export') for ident in vpn_ids}
@@ -693,6 +895,8 @@ def register_host_identity(policy_id: str, data: HostIdentity, request: Request)
         previous=_policies.get(policy_id)
         if previous is None:raise HTTPException(404,"Política não encontrada")
         mac=data.registered_mac.lower()
+        if previous.get('port_forward_enabled') and previous.get('registered_mac', '').lower() != mac:
+            raise HTTPException(409, 'Disable forwarding before replacing the selected MAC identity')
         if any(x.get("registered_mac")==mac for key,x in _policies.items() if key!=policy_id):
             raise HTTPException(409,"MAC já registado")
         observed=network_neighbors()["hosts"]
@@ -773,7 +977,7 @@ def create_policy(data: Policy, request: Request):
             if not any(h.get("ip")==host_ip and h.get("mac","").lower()==registered_mac
                        for h in network_neighbors()["hosts"]):
                 raise HTTPException(409,"MAC não corresponde ao dispositivo observado no IPv4 seleccionado")
-        entry = {**data.model_dump(), "host_ip": host_ip, "registered_mac":registered_mac, "status": "draft"}
+        entry = {**data.model_dump(), "host_ip": host_ip, "registered_mac":registered_mac, "upnp_enabled": True, "port_forward_enabled": False, "status": "draft"}
         if entry["destination"] == "direct":
             # Apply and confirm before persisting. Never leave a misleading draft
             # after a failed dataplane operation.
@@ -1070,10 +1274,19 @@ def _policy_agent_call(action, policy_id, entry):
         payload = {"action": action, "id": policy_id, "token": token}
         if action == "status":
             payload["registered_mac"] = entry.get("registered_mac")
+        if action == "port_reconcile":
+            payload["selected"] = bool(entry.get("selected"))
+            payload["provider"] = entry.get("provider", "generic")
+            payload["upnp_enabled"] = bool(entry.get("upnp_enabled", False))
         if action == "identity_update":
             payload.update({"host_ip":entry["host_ip"], "registered_mac":entry["registered_mac"]})
-        if action in ("transition_basic", "vpn_transition"):
+        if action in ("host_rebind_prepare", "host_rebind_commit"):
+            payload.update({"new_ip": entry["new_ip"], "mac": entry["mac"]})
+            if action == "host_rebind_prepare":
+                payload["old_ip"] = entry["old_ip"]
+        if action in ("transition_basic", "vpn_transition", "vpn_revert"):
             payload["destination"] = entry["destination"]
+            payload["provider"] = _natpmp_provider_for_route(entry["destination"])
         if action == "vpn_transition":
             payload["dns_ipv4"] = entry.get("dns_ipv4")
         if action in ("apply", "preflight"):
@@ -1085,7 +1298,7 @@ def _policy_agent_call(action, policy_id, entry):
                             "registered_mac":entry.get("registered_mac"),
                             "network": network_config["draft"]})
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(8)
+            client.settimeout(90 if action in ("port_reconcile", "host_rebind_commit") else 60 if action == "host_rebind_prepare" else 8)
             client.connect(location)
             client.sendall((json.dumps(payload) + "\n").encode())
             response = b""
@@ -1376,7 +1589,15 @@ def dns_live_dashboard():
                 vpn_dns_reachable=True
         except (ValueError,OSError):
             pass
+    with _lock:
+        vpn_assigned_clients = sum(
+            1 for policy in _policies.values()
+            if policy.get("destination") not in ("direct", "blocked")
+        )
     return {"stats": stats, "primary_dns": bool(dns_summary()["reachable"]),
+            "vpn_assigned_clients": vpn_assigned_clients,
+            "vpn_dns_path": "provider_dns_via_tunnel" if vpn_assigned_clients else "not_applicable",
+            "pihole_filtering_verified_for_vpn_hosts": False,
             "vpn_resolver_reachable": True if vpn_dns_reachable else None,
             "vpn_host_ip": None, "vpn_host_mode": None,
             "vpn_host_guard": False, "vpn_host_routed": False,
@@ -1930,6 +2151,124 @@ def network_neighbors():
             "lan_cidrs":{name:str(net) for name,net in allowed.items()}, "hosts": sorted(hosts.values(), key=lambda h: tuple(map(int, h["ip"].split("."))))}
 
 
+@app.get("/api/v1/policies/{policy_id}/rebind-preflight")
+def rebind_preflight(policy_id: str):
+    """Read-only kernel evidence; never alter routing from a GET request."""
+    with _lock:
+        entry = _policies.get(policy_id)
+        if entry is None:
+            raise HTTPException(404, "Política não encontrada")
+        if not entry.get("registered_mac"):
+            raise HTTPException(409, "Registe primeiro a identidade MAC do host")
+        observed = _policy_agent_call("host_rebind_preflight", policy_id, {})
+        if str(observed.get("registered_mac", "")).lower() != str(entry["registered_mac"]).lower():
+            raise HTTPException(409, "Identidade kernel e SQLite incompatíveis")
+        if observed.get("previous_ip") != entry["host_ip"]:
+            raise HTTPException(409, "Estado IPv4 do kernel e SQLite incompatível")
+        candidate = observed.get("candidate_ip")
+        if candidate != entry["host_ip"] and any(
+                other_id != policy_id and other.get("host_ip") == candidate
+                for other_id, other in _policies.items()):
+            raise HTTPException(409, "IP candidato já atribuído a outra política")
+        return {**observed, "automatic_cutover_enabled": False}
+
+
+@app.post("/api/v1/policies/{policy_id}/rebind-ip")
+def rebind_host_ip(policy_id: str, new_ip: str, request: Request):
+    """Authenticated, explicit IPv4 rebind; not a GET side effect."""
+    _require_policy_admin(request)
+    return _rebind_host_ip(policy_id, new_ip)
+
+
+def _rebind_host_ip(policy_id: str, new_ip: str):
+    """Internal transaction used by authorised requests and the local watcher."""
+    global _revision
+    with _lock:
+        current = _policies.get(policy_id)
+        if not current or not current.get("registered_mac"):
+            raise HTTPException(409, "Registered host MAC required")
+        try:
+            ip = ip_address(new_ip)
+        except ValueError as exc:
+            raise HTTPException(422, "Invalid host IP") from exc
+        if ip.version != 4 or not ip.is_private or ip.is_loopback:
+            raise HTTPException(422, "Private IPv4 required")
+        new_ip = str(ip)
+        old_ip = current["host_ip"]
+        mac = current["registered_mac"].lower()
+        if any(pid != policy_id and item.get("host_ip") == new_ip
+               for pid, item in _policies.items()):
+            raise HTTPException(409, "IPv4 already assigned")
+        if old_ip != new_ip:
+            prepared = _policy_agent_call("host_rebind_prepare", policy_id,
+                                          {"old_ip": old_ip, "new_ip": new_ip, "mac": mac})
+            if not prepared.get("prepared"):
+                raise HTTPException(503, "Rebind preparation failed")
+            updated = {**current, "host_ip": new_ip}
+            try:
+                with closing(_connect()) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    persisted = {pid: json.loads(payload) for pid, payload in
+                                 db.execute("SELECT id,payload FROM policies")}
+                    original = persisted.get(policy_id) or {}
+                    if original.get("host_ip") != old_ip or str(
+                            original.get("registered_mac") or "").lower() != mac:
+                        raise HTTPException(409, "Host policy changed during IP cutover")
+                    if any(pid != policy_id and p.get("host_ip") == new_ip
+                           for pid, p in persisted.items()):
+                        raise HTTPException(409, "IPv4 reserved by another persisted host")
+                    db.execute("UPDATE policies SET payload=? WHERE id=?",
+                               (json.dumps(updated), policy_id))
+                    db.commit()
+            except Exception:
+                # The privileged agent retains its persistent quarantine.
+                # Never report a successful IP move when SQLite rejects it.
+                raise
+            _policies[policy_id] = updated
+            _revision += 1
+        result = _policy_agent_call("host_rebind_commit", policy_id,
+                                    {"new_ip": new_ip, "mac": mac})
+        if not result.get("committed") or result.get("host_ip") != new_ip:
+            raise HTTPException(503, "Kernel commit not confirmed; host quarantined")
+        return {"policy_id": policy_id, "host_ip": new_ip,
+                "committed": True}
+
+
+def _auto_rebind_loop():
+    """Reconcile host DHCP changes without granting any DIRECT fallback.
+
+    Enabled only with VPNGW_AUTO_REBIND=1 after successful staging QA.
+    The shipped WebAdmin entrypoint starts exactly one Uvicorn worker.
+    """
+    from rebind_watcher import RebindWatcher
+    watcher = RebindWatcher()
+    log = logging.getLogger("vpngw.rebind")
+    while True:
+        try:
+            with _lock:
+                snapshots = [dict(p) for p in _policies.values()]
+            outcomes = watcher.poll(
+                snapshots,
+                preflight=lambda pid: _policy_agent_call(
+                    "host_rebind_preflight", pid, {}),
+                pending=lambda pid: _policy_agent_call(
+                    "host_rebind_pending", pid, {}),
+                apply=lambda pid, candidate: _rebind_host_ip(pid, candidate))
+            for pid, outcome in outcomes:
+                log.info("host %s: %s", pid, outcome)
+        except Exception:
+            log.exception("MAC/IP rebind reconciliation aborted; no direct fallback")
+        time.sleep(30)
+
+
+@app.on_event("startup")
+def _start_auto_rebind():
+    """Disabled by default until authenticated QA validates the full cutover."""
+    if os.environ.get("VPNGW_AUTO_REBIND", "0") == "1":
+        Thread(target=_auto_rebind_loop, name="vpngw-host-rebind",
+               daemon=True).start()
+
+
 @app.get("/api/v1/network/dhcp-policy-observations")
 def dhcp_policy_observations():
     """Passive DHCP/IP movement hints; never imply verified ownership or execute changes."""
@@ -2440,7 +2779,7 @@ def wireguard_profiles_status():
 def gateway_live():
     """Read-only state built from saved policies, never sample client IDs."""
     policies=list_policies()
-    return {'version':'1.0.2',
+    return {'version':'1.0.3',
             'scope':os.environ.get('VPNGW_RUNTIME_SCOPE','host'),
             'clients':{p['host_ip']:{'route':p['destination']} for p in policies},
             'wireguard':{'interface_present':any(p.get('protocol')=='wireguard' and p.get('connected')
