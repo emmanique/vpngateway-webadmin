@@ -10,6 +10,9 @@ EnvironmentFile=-/etc/default/vpngw-policy-agent
 User=root
 Group=root
 ExecStart=/usr/bin/python3 /usr/local/libexec/vpngw-policy-agent.py serve
+# On unexpected shutdown, remove only this feature's owned nft table.
+ExecStopPost=-/usr/sbin/nft delete table ip vpngw_port_forward
+ExecStopPost=-/usr/bin/python3 /usr/local/libexec/vpngw-natpmp-discovery.py --cleanup
 Restart=on-failure
 RestartSec=2
 RuntimeDirectory=vpngw-policy-agent
