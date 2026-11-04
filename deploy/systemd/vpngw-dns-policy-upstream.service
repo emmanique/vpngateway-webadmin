@@ -1,0 +1,27 @@
+[Unit]
+Description=Gateway VPN Multi v2 route-isolated central Pi-hole DNS upstream (opt-in)
+After=network-online.target docker.service vpngw-policy-agent.service
+Wants=network-online.target
+Requires=docker.service vpngw-policy-agent.service
+ConditionPathExists=/etc/default/vpngw-dns-policy-upstream
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/vpngw-dns-policy-upstream
+ExecStart=/usr/bin/python3 /usr/local/libexec/vpngw-dns-worker-bootstrap.py
+User=root
+Group=root
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_RAW
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/vpngw-policy-agent
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

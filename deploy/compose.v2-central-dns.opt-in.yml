@@ -1,0 +1,10 @@
+# v2 central Pi-hole DNS, explicit opt-in only. Do not activate until
+# packet evidence and atomic host-policy cutover are verified.
+# Alters the existing Pi-hole, never creates a second central Pi-hole.
+services:
+  pihole:
+    environment:
+      FTLCONF_dns_upstreams: '$VPNGW_DNS_POLICY_UPSTREAM'
+      FTLCONF_misc_dnsmasq_lines: 'strip-subnet;add-subnet=32,128'
+      FTLCONF_dns_cache_size: '0'
+      FTLCONF_dns_listeningMode: 'ALL'

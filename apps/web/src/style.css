@@ -87,3 +87,12 @@ footer{color:#c0d3c5}.tag{background:rgba(30,47,31,.85)}
 .system-panel .password-hint{color:#f2ce81;font-size:12px}.system-panel .password-valid{color:#89e5b0;font-size:12px}
 
 .system-panel .restore-error{grid-column:1/-1;color:#ffd4c9;background:#42241f;border:1px solid #b86957;border-radius:8px;padding:12px;margin:0}
+
+/* Logical egress flow: LAN clients -> policy gateway -> WAN, independent of the management service. */
+.topology-layout{grid-template-columns:minmax(0,1fr) 22px minmax(0,1.12fr) 22px minmax(0,1fr)}
+.topology-management{margin-top:18px;padding:12px 10px;border:1px dashed #7b966e;border-radius:8px;background:#142f21}
+.topology-management>span,.topology-management>small{display:block;font-size:10px;color:#b7c8b6}
+.topology-management>strong{display:block;font-size:12px;overflow-wrap:anywhere;margin:7px 0}
+.topology-lan{border-color:#487b60}
+.topology-wan{border-color:#688a62}
+@media(max-width:850px){.topology-layout{grid-template-columns:minmax(0,1fr)}.topology-arrow{transform:rotate(90deg)}}
