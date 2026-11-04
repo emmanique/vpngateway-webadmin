@@ -18,6 +18,7 @@ def batch(policy_id, plan, target):
     if any(not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}",x) for x in (lan,wan)):
         raise ValueError("Invalid interface")
     lines=[f"flush chain ip filter {chain}",
+           f'add rule ip filter {chain} iifname "{lan}" ether saddr {mac} ip saddr != {host} drop comment "vpngw_ip_rebind_guard"',
            f'add rule ip filter {chain} iifname "{lan}" ip saddr {host} ether saddr != {mac} drop comment "vpngw_identity_guard"']
     if target=="blocked":
         lines.extend([f'add rule ip filter {chain} iifname "{lan}" ip saddr {host} counter drop',
