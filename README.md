@@ -16,6 +16,15 @@
 
 <p align="center"><img src="screenshots/overview.png" width="920" alt="Gateway VPN Multi WebAdmin overview"></p>
 
+## MediaHub bootstrap compatibility (post-v1.0.5 QA)
+
+The VPN Gateway management IP is configured independently from the LAN's
+default router. The host downloads the signed-by-TLS, SHA-256-verified bundle
+on HTTPS port 443, while its dedicated authenticated read-only status API
+remains on port 9443 once provisioned. See
+[MediaHub independent Gateway installation](docs/mediahub-sync-explicit-gateway.md).
+The observer is disabled until credentials are provisioned.
+
 ## Release 1.0.5 — MediaHub observer and WebAdmin routing correction
 
 **VPN Gateway Multi 1.0.5** includes per-host UPnP/NAT-PMP port ownership, dynamic Proton port reconciliation, OpenVPN/DNS robustness, independent MediaHub Stremio port synchronisation and a reusable local CI workflow.

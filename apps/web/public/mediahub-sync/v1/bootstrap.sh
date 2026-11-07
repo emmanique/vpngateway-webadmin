@@ -14,19 +14,35 @@ CA="${MEDIAHUB_PORT_SYNC_CA_FILE:-/etc/mediahub/gateway-ca.pem}"
 for bin in ip python3 curl sha256sum; do
   command -v "$bin" >/dev/null || { echo "Missing $bin" >&2; exit 1; }
 done
-# Never use IP literals from the script itself: resolve the current host's
-# actual default route. Re-check after downloads to avoid mid-flight switches.
-get_gateway() {
-  ip -j -4 route get 1.1.1.1 | python3 -c '
+# The HTTPS service hostname/IP is not the default-router address.
+# Explicit Gateway LAN IP is required; no silent use of the WAN router.
+GW="${MEDIAHUB_PORT_SYNC_GATEWAY_IP:-}"
+WEB_PORT="${MEDIAHUB_PORT_SYNC_BOOTSTRAP_PORT:-443}"
+python3 - "$GW" "$WEB_PORT" <<'PY_GATEWAY'
+import ipaddress,sys
+try:
+    ip=ipaddress.IPv4Address(sys.argv[1])
+    port=int(sys.argv[2])
+except (ValueError,IndexError) as e:
+    raise SystemExit("Set MEDIAHUB_PORT_SYNC_GATEWAY_IP to the VPN Gateway LAN IPv4") from e
+if not ip.is_private or ip.is_loopback or ip.is_link_local or not (1<=port<=65535):
+    raise SystemExit("Unsafe VPN Gateway LAN endpoint")
+PY_GATEWAY
+BASE="https://${GW}:${WEB_PORT}/mediahub-sync/v1"
+# The current kernel route to the management IP must be stable during download.
+route_identity() {
+  ip -j -4 route get "$GW" | python3 -c '
 import json,sys,ipaddress
 rows=json.load(sys.stdin)
-if len(rows)!=1: raise SystemExit(2)
-gateway=ipaddress.ip_address(rows[0].get("gateway",""))
-if gateway.version!=4 or not gateway.is_private or gateway.is_loopback: raise SystemExit(3)
-print(gateway)'
+if len(rows)!=1: raise SystemExit("Missing route to VPN Gateway")
+r=rows[0]
+dev=r.get("dev","")
+src=r.get("prefsrc") or r.get("src","")
+if not dev or not src: raise SystemExit("No source IPv4 for Gateway route")
+ipaddress.IPv4Address(src)
+print(dev+"|"+src+"|"+str(r.get("gateway","")))'
 }
-GW="$(get_gateway)"
-BASE="https://${GW}:9443/mediahub-sync/v1"
+ROUTE_BEFORE="$(route_identity)"
 TEMP="$(mktemp -d /tmp/mediahub-port-sync.XXXXXXXX)"
 trap 'rm -rf "$TEMP"' EXIT
 fetch() {
@@ -51,10 +67,11 @@ while IFS= read -r line; do
   mkdir -p "$TEMP/$(dirname "$name")"
   fetch "$name"
 done < "$TEMP/SHA256SUMS"
-[[ "$(get_gateway)" == "$GW" ]] || { echo "Default Gateway changed; abort" >&2; exit 5; }
+[[ "$(route_identity)" == "$ROUTE_BEFORE" ]] || { echo "Route to VPN Gateway changed; abort" >&2; exit 5; }
 (cd "$TEMP" && sha256sum --check --strict SHA256SUMS)
-echo "Verified MediaHub port-sync bundle from current gateway: $GW"
+echo "Verified MediaHub port-sync bundle from configured VPN Gateway: $GW:$WEB_PORT"
 if [[ "$MODE" == "--install" ]]; then
+  export MEDIAHUB_PORT_SYNC_GATEWAY_IP="$GW"
   bash "$TEMP/installers/install-mediahub-gateway-port-sync-linux.sh"
   echo "Service installed but NOT enabled. Configure /etc/mediahub/port-sync.conf."
 else

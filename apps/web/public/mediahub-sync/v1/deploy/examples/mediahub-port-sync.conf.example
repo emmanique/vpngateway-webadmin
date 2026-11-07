@@ -5,9 +5,11 @@ MEDIAHUB_PORT_SYNC_ENABLE=0
 MEDIAHUB_PORT_SYNC_POLICY_ID=stremio
 # Registered physical MediaHub MAC, NOT a fixed IP.
 MEDIAHUB_PORT_SYNC_HOST_MAC=aa:bb:cc:dd:ee:ff
-# The server discovers its gateway from: ip -j -4 route get 1.1.1.1 from <current-host-ip>.
-# NO fixed Gateway IP or hostname. TLS CA must authenticate the discovered IP
-# with a matching certificate IP SAN (never disable certificate validation).
+# Explicit VPN Gateway management LAN IPv4, NOT the default router.
+# Required even when the host routes to the Internet via another appliance.
+MEDIAHUB_PORT_SYNC_GATEWAY_IP=YOUR_GATEWAY_LAN_IP
+# Separate authenticated read-only status listener; do not confuse with
+# the public bootstrap HTTPS reverse proxy on port 443.
 MEDIAHUB_PORT_SYNC_API_PORT=9443
 MEDIAHUB_PORT_SYNC_API_PATH=/api/v1/port-forward/desired
 MEDIAHUB_PORT_SYNC_ROUTE_PROBE=1.1.1.1

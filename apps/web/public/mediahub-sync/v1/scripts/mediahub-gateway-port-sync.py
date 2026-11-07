@@ -115,8 +115,8 @@ def active_gateway(*, local_address: str, expected_mac: str,
                    probe: str = "1.1.1.1", runner=subprocess.run) -> tuple[str, str]:
     """Determine the routing gateway FROM this MediaHub host's current IPv4.
 
-    This runs in the host OS, not in the container. It never trusts a
-    separately configured Gateway IP or an arbitrary routing interface.
+    This checks the egress NIC belonging to the registered MAC.
+    The management Gateway is independently configured and TLS verified.
     The interface selected by the kernel must be the NIC with the
     registered MediaHub MAC.
     """
@@ -154,7 +154,7 @@ def active_gateway(*, local_address: str, expected_mac: str,
 
 def gateway_endpoint(ip: str, *, port: int = 9443,
                      path: str = "/api/v1/port-forward/desired") -> str:
-    """Construct the API address only from the kernel-observed gateway."""
+    """Construct the API address from an explicit approved Gateway LAN IPv4."""
     address = ipaddress.IPv4Address(ip)
     if (not address.is_private or address.is_link_local or address.is_loopback
             or not isinstance(port, int) or not 1 <= port <= 65535
@@ -240,6 +240,13 @@ def main() -> int:
     api_path = os.environ.get("MEDIAHUB_PORT_SYNC_API_PATH",
                               "/api/v1/port-forward/desired")
     probe = os.environ.get("MEDIAHUB_PORT_SYNC_ROUTE_PROBE", "1.1.1.1")
+    selected_gateway = os.environ["MEDIAHUB_PORT_SYNC_GATEWAY_IP"]
+    try:
+        configured_ip = ipaddress.IPv4Address(selected_gateway)
+    except ipaddress.AddressValueError as error:
+        raise PortSyncError("Explicit VPN Gateway management LAN IPv4 required") from error
+    if not configured_ip.is_private or configured_ip.is_loopback or configured_ip.is_link_local:
+        raise PortSyncError("Unsafe configured VPN Gateway management IPv4")
     with LOCK_PATH.open("a+") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         ips = local_ip_addresses(mac)
@@ -248,15 +255,15 @@ def main() -> int:
         address = next(iter(ips))
         gateway, interface = active_gateway(local_address=address,
                                              expected_mac=mac, probe=probe)
-        endpoint = gateway_endpoint(gateway, port=api_port, path=api_path)
+        endpoint = gateway_endpoint(str(configured_ip), port=api_port, path=api_path)
         snapshot = query_gateway(endpoint, ca, token_file)
         port = select_port(snapshot, expected_policy=policy, expected_mac=mac,
                            local_addresses=ips, now=time.time())
         if port is None:
             publish_observation(None, policy=policy, mac=mac, host_ip=address,
-                                gateway=gateway, route=None, issued=None, expiry=None)
+                                gateway=str(configured_ip), route=None, issued=None, expiry=None)
             print(json.dumps({"result": "no_verified_port_change",
-                              "gateway": gateway, "interface": interface}))
+                              "gateway": str(configured_ip), "router": gateway, "interface": interface}))
             return 0
         # Avoid applying a stale lease after the host's gateway or its IP
         # changes while the remote HTTPS request was in flight.
@@ -266,11 +273,11 @@ def main() -> int:
             raise PortSyncError("Host IP or gateway changed during reconciliation")
         runtime = snapshot.get("runtime") or {}
         publish_observation(port, policy=policy, mac=mac, host_ip=address,
-                            gateway=gateway, route=(snapshot.get("selected_host") or {}).get("route"),
+                            gateway=str(configured_ip), route=(snapshot.get("selected_host") or {}).get("route"),
                             issued=runtime.get("updated_at"),
                             expiry=runtime.get("lease_expires_at"))
         print(json.dumps({"result": "port_observed", "port": port,
-                          "host_policy": policy, "gateway": gateway,
+                          "host_policy": policy, "gateway": str(configured_ip),
                           "interface": interface, "stremio_unchanged": True}))
     return 0
 

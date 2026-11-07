@@ -22,6 +22,28 @@ install -m 0644 "$TIMER" /etc/systemd/system/mediahub-gateway-port-sync.timer
 if [[ ! -e /etc/mediahub/port-sync.conf ]]; then
   install -m 0600 "$CONFIG_EXAMPLE" /etc/mediahub/port-sync.conf
 fi
+# Bind the observer to the explicitly authenticated Gateway used by bootstrap.
+# Do not infer it from the LAN's default router.
+if [[ -n "${MEDIAHUB_PORT_SYNC_GATEWAY_IP:-}" ]]; then
+  python3 - "$MEDIAHUB_PORT_SYNC_GATEWAY_IP" <<'PY_GATEWAY_CONFIG'
+import ipaddress,sys
+from pathlib import Path
+try:
+    address=ipaddress.IPv4Address(sys.argv[1])
+except ValueError as exc:
+    raise SystemExit("Invalid explicit VPN Gateway LAN IPv4") from exc
+if not address.is_private or address.is_loopback or address.is_link_local:
+    raise SystemExit("VPN Gateway management IP must be private LAN")
+config=Path("/etc/mediahub/port-sync.conf")
+rows=config.read_text().splitlines()
+key="MEDIAHUB_PORT_SYNC_GATEWAY_IP="
+rows=[key+str(address) if row.startswith(key) else row for row in rows]
+if not any(row.startswith(key) for row in rows):
+    rows.append(key+str(address))
+config.write_text("\n".join(rows)+"\n")
+config.chmod(0o600)
+PY_GATEWAY_CONFIG
+fi
 systemctl daemon-reload
 # Gateway watcher is observation-only. The existing Stremio reconciler is the
 # sole writer to .env and the sole authority to recreate the Docker container.
@@ -32,7 +54,7 @@ if [[ -n "$COMPOSE_DIR" && "$COMPOSE_DIR" == /* &&
       -f "$COMPOSE_DIR/compose.yaml" && -f "$COMPOSE_DIR/.env" &&
       -f "$COMPOSE_DIR/scripts/gateway-port-sync.py" &&
       -f "$COMPOSE_DIR/scripts/reconcile-host.py" ]]; then
-  if ! grep -q 'def consume_observation(' "$COMPOSE_DIR/scripts/gateway-port-sync.py"; then
+  if ! grep -q 'def load_verified_observation(' "$COMPOSE_DIR/scripts/gateway-port-sync.py"; then
     echo "Stremio reconciler needs the Gateway observation consumer update; refusing unsafe activation." >&2
     exit 7
   fi
@@ -65,7 +87,16 @@ observer_conf.write_text("".join(f"{k}={v}\n" for k,v in watcher.items()))
 observer_conf.chmod(0o600)
 file=Path("/etc/stremio-webadmin/port-sync.conf")
 file.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
-expected={"ENABLED":"1","SOURCE":"observation","POLICY_ID":policy,"HOST_MAC":mac}
+gateway_ip=watcher.get("MEDIAHUB_PORT_SYNC_GATEWAY_IP","")
+try:
+    import ipaddress
+    vpn_gateway=ipaddress.IPv4Address(gateway_ip)
+    valid_gateway=(vpn_gateway.is_private and not vpn_gateway.is_loopback and not vpn_gateway.is_link_local)
+except ValueError:
+    valid_gateway=False
+expected={"ENABLED":"0","SOURCE":"observation","POLICY_ID":policy,"HOST_MAC":mac}
+if valid_gateway:
+    expected["GATEWAY_IP"]=gateway_ip
 if not re.fullmatch(r"[a-z][a-z0-9-]{1,31}",expected["POLICY_ID"]):
     raise SystemExit("Invalid policy ID")
 if file.exists():
@@ -73,10 +104,12 @@ if file.exists():
         raise SystemExit("Unsafe Stremio port-sync config")
     original=dict(line.strip().split("=",1) for line in file.read_text().splitlines()
                   if "=" in line and not line.lstrip().startswith("#"))
-    for field in ("POLICY_ID","HOST_MAC"):
+    for field in ("POLICY_ID","HOST_MAC","GATEWAY_IP"):
         if original.get(field) and original[field]!=expected[field]:
             raise SystemExit("Existing Stremio port-sync binding differs: "+field)
     original.update(expected)
+    # Never activate until dedicated read-only credentials and CA pass QA.
+    original["ENABLED"]="0"
     expected=original
 file.write_text("".join(f"{k}={v}\n" for k,v in expected.items()))
 file.chmod(0o600)
@@ -87,6 +120,6 @@ PYCONFIG
 else
   echo "Existing Stremio reconciler not detected. No .env or container changes." >&2
 fi
-echo "Installed observation-only Gateway watcher, timer DISABLED until authenticated credentials are provisioned."
+echo "Installed observer and prepared Stremio config with ENABLED=0; both timers remain opt-in."
 echo "Configure /etc/mediahub/port-sync.conf and install the trusted Gateway CA and dedicated status token."
 echo "After validation: systemctl enable --now mediahub-gateway-port-sync.timer"
