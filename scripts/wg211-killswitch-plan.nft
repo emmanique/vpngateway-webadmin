@@ -1,0 +1,18 @@
+# DRY RUN ONLY. Verify client MAC and install fail-closed boot service before applying.
+# Block local DNS before Docker DNAT; permit remote DNS only through wg211.
+# .211 IPv6 is blocked by observed MAC (verify at endpoint before use).
+table inet vpngw_wg211_guard {
+  chain prerouting_guard {
+    type filter hook prerouting priority -150; policy accept;
+    iifname "ens18" ether saddr bc:24:11:df:a6:74 meta nfproto ipv6 counter drop
+    iifname "ens18" ip saddr 192.168.1.211 ip daddr 192.168.1.210 udp dport 53 counter drop
+    iifname "ens18" ip saddr 192.168.1.211 ip daddr 192.168.1.210 tcp dport 53 counter drop
+  }
+  chain forward_guard {
+    type filter hook forward priority -50; policy accept;
+    iifname "ens18" ip saddr 192.168.1.211 oifname "wg211" counter accept
+    iifname "ens18" ip saddr 192.168.1.211 counter drop
+    iifname "wg211" ip daddr 192.168.1.211 ct state established,related counter accept
+    ip daddr 192.168.1.211 counter drop
+  }
+}

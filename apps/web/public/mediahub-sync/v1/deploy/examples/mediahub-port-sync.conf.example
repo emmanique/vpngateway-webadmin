@@ -14,5 +14,5 @@ MEDIAHUB_PORT_SYNC_ROUTE_PROBE=1.1.1.1
 MEDIAHUB_PORT_SYNC_CA_FILE=/etc/mediahub/gateway-ca.pem
 # Distinct 0600 token from the Gateway's dedicated read-only host service.
 MEDIAHUB_PORT_SYNC_TOKEN_FILE=/etc/mediahub/gateway-port-sync.token
-# Absolute path of the trusted MediaHub Stremio Docker Compose directory.
-MEDIAHUB_PORT_SYNC_COMPOSE_DIR=/root/stremio-libtorrent-server
+# The bootstrap discovers the active Stremio Compose directory via Docker labels.
+# The watcher only publishes an observation and NEVER edits .env or Docker.

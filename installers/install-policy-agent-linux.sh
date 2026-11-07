@@ -27,7 +27,7 @@ if [[ ! -s /etc/vpngw-policy-agent/secret ]]; then
 fi
 install -d -m 0755 /usr/local/libexec
 install -m 0755 scripts/vpngw-policy-agent.py /usr/local/libexec/vpngw-policy-agent.py
-for script in vpngw-host-rebind.py vpngw-host-rebind-transaction.py vpngw-direct-upnp.py vpngw-upnpc-upstream.py vpngw-port-forward.py vpngw-natpmp-discovery.py vpngw-proton-natpmp.py vpngw-port-reconcile.py vpngw-vpn-route-plan.py vpngw-vpn-transaction.py vpngw-openvpn-agent.py vpngw-basic-transition-batch.py vpngw-vpn-host-guard.py vpngw-vpn-route-commands.py vpngw-vpn-filter-batch.py network-topology.py lan-discovery.py host-discovery-snapshot.py; do
+for script in vpngw-host-rebind.py vpngw-host-rebind-transaction.py vpngw-direct-upnp.py vpngw-upnpc-upstream.py vpngw-port-forward.py vpngw-natpmp-discovery.py vpngw-proton-natpmp.py vpngw-port-reconcile.py vpngw-vpn-route-plan.py vpngw-vpn-transaction.py vpngw_management_access.py vpngw-openvpn-agent.py vpngw-basic-transition-batch.py vpngw-vpn-host-guard.py vpngw-vpn-route-commands.py vpngw-vpn-filter-batch.py network-topology.py lan-discovery.py host-discovery-snapshot.py; do
   install -m 0755 "scripts/$script" "/usr/local/libexec/$script"
 done
 # Provision the Proton-compatible NAT-PMP client with a pinned upstream

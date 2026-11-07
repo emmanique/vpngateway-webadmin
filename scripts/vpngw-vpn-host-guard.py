@@ -26,6 +26,13 @@ def render(policy_id, host_ip, mac, lan, vpn, dns_ipv4=None, central_dns=None):
     if lan == vpn:
         raise ValueError("VPN must use a separate network interface")
     dns = str(ipaddress.IPv4Address(dns_ipv4)) if dns_ipv4 else None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("vpngw_management_access",
+        __import__("pathlib").Path(__file__).with_name("vpngw_management_access.py"))
+    mgmt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mgmt)
+    management_match = mgmt.match(host, mac, lan)
+    management_rule = ('        ' + management_match + ' counter accept\n') if management_match else ''
     central_rules = ""
     if central_dns is not None:
         if dns_ipv4 is not None or not isinstance(central_dns, dict):
@@ -53,7 +60,7 @@ def render(policy_id, host_ip, mac, lan, vpn, dns_ipv4=None, central_dns=None):
         iifname "{lan}" ether saddr {mac} meta nfproto ipv6 counter drop
         iifname "{lan}" ip saddr {host} ether saddr != {mac} counter drop
         iifname "{lan}" ether saddr {mac} ip saddr != {host} counter drop
-{central_rules}        iifname "{lan}" ether saddr {mac} udp dport 53 oifname != "{vpn}" counter drop
+{management_rule}{central_rules}        iifname "{lan}" ether saddr {mac} udp dport 53 oifname != "{vpn}" counter drop
         iifname "{lan}" ether saddr {mac} tcp dport 53 oifname != "{vpn}" counter drop
         # Standard DoT/DoQ may bypass provider DNS and central filtering.
         # Deny port 853 independently of the chosen VPN interface.

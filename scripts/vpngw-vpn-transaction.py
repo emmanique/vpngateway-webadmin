@@ -95,6 +95,12 @@ def remove_guard(pid):
     argv_run(['/usr/sbin/nft','delete','table','inet',table_name(pid)],verify=False)
 
 def stage(pid, plan, profile, vpn, dns, connected):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("vpngw_management_access",
+        __import__("pathlib").Path(__file__).with_name("vpngw_management_access.py"))
+    mgmt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mgmt)
+    mgmt.ensure(pid,plan['host'],plan['registered_mac'],plan['lan'])
     r=resources(plan['host'],profile,plan['lan'],vpn)
     guard=guard_text(pid,plan['host'],plan['registered_mac'],plan['lan'],vpn,dns)
     filt=filter_text(pid,plan['host'],plan['registered_mac'],plan['lan'],vpn)

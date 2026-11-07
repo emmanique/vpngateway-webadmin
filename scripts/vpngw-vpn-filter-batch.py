@@ -14,6 +14,13 @@ def generate(policy_id, host_ip, mac, lan, vpn, central_dns=None):
         raise ValueError('Invalid interface')
     chain='GW_'+hashlib.sha256(policy_id.encode()).hexdigest()[:16].upper()
     mac=mac.lower()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("vpngw_management_access",
+        __import__("pathlib").Path(__file__).with_name("vpngw_management_access.py"))
+    mgmt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mgmt)
+    management_match = mgmt.match(host, mac, lan)
+    management_rule = ('add rule ip filter ' + chain + ' ' + management_match + ' counter accept\n') if management_match else ''
     central_rules = ""
     if central_dns is not None:
         if not isinstance(central_dns, dict):
@@ -31,6 +38,6 @@ def generate(policy_id, host_ip, mac, lan, vpn, central_dns=None):
     return f'''flush chain ip filter {chain}
 add rule ip filter {chain} iifname "{lan}" ether saddr {mac} ip saddr != {host} drop comment "vpngw_ip_rebind_guard"
 add rule ip filter {chain} iifname "{lan}" ip saddr {host} ether saddr != {mac} drop comment "vpngw_identity_guard"
-{central_rules}add rule ip filter {chain} iifname "{lan}" oifname "{vpn}" ip saddr {host} ct state new,established,related counter accept
+{management_rule}{central_rules}add rule ip filter {chain} iifname "{lan}" oifname "{vpn}" ip saddr {host} ct state new,established,related counter accept
 add rule ip filter {chain} iifname "{vpn}" oifname "{lan}" ip daddr {host} counter accept
 '''

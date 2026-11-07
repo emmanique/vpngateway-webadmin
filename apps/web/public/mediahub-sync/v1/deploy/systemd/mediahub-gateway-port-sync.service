@@ -1,5 +1,5 @@
 [Unit]
-Description=Reconcile selected Gateway VPN host NAT-PMP port into MediaHub Docker Compose
+Description=Observe selected Gateway VPN NAT-PMP port for Stremio reconciler
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service

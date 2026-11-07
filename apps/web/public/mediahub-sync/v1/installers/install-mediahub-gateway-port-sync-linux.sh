@@ -23,11 +23,70 @@ if [[ ! -e /etc/mediahub/port-sync.conf ]]; then
   install -m 0600 "$CONFIG_EXAMPLE" /etc/mediahub/port-sync.conf
 fi
 systemctl daemon-reload
-echo "Installed OS-level files. Timer intentionally left DISABLED."
-echo "Edit /etc/mediahub/port-sync.conf and install a trusted CA at MEDIAHUB_PORT_SYNC_CA_FILE."
-echo "Gateway certificate MUST have an IP SAN matching the currently detected default gateway."
-echo "To check the actual host route: ip -4 route get 1.1.1.1"
-echo "For an operator test (after QA approval):"
-echo "  systemctl start mediahub-gateway-port-sync.service"
-echo "After end-to-end validation, enable monitoring explicitly:"
-echo "  systemctl enable --now mediahub-gateway-port-sync.timer"
+# Gateway watcher is observation-only. The existing Stremio reconciler is the
+# sole writer to .env and the sole authority to recreate the Docker container.
+# Discover the *actual* Compose directory from Docker metadata, never from a
+# fixed sample path or a guessed IP address.
+COMPOSE_DIR="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' stremio-libtorrent-server 2>/dev/null || true)"
+if [[ -n "$COMPOSE_DIR" && "$COMPOSE_DIR" == /* &&
+      -f "$COMPOSE_DIR/compose.yaml" && -f "$COMPOSE_DIR/.env" &&
+      -f "$COMPOSE_DIR/scripts/gateway-port-sync.py" &&
+      -f "$COMPOSE_DIR/scripts/reconcile-host.py" ]]; then
+  if ! grep -q 'def consume_observation(' "$COMPOSE_DIR/scripts/gateway-port-sync.py"; then
+    echo "Stremio reconciler needs the Gateway observation consumer update; refusing unsafe activation." >&2
+    exit 7
+  fi
+  python3 - "$COMPOSE_DIR" <<'PYCONFIG'
+import json,os,re,stat,subprocess,sys
+from pathlib import Path
+root=Path(sys.argv[1]).resolve(strict=True)
+if not root.is_dir():
+    raise SystemExit("Invalid Compose root")
+routes=json.loads(subprocess.run(["ip","-j","-4","route","get","1.1.1.1"],
+                                 capture_output=True,text=True,check=True).stdout)
+if len(routes)!=1 or not routes[0].get("gateway"):
+    raise SystemExit("Default gateway unavailable")
+nic=routes[0]["dev"]
+links=json.loads(subprocess.run(["ip","-j","link","show","dev",nic],
+                                capture_output=True,text=True,check=True).stdout)
+if len(links)!=1 or not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}",links[0]["address"].lower()):
+    raise SystemExit("Registered host MAC not found")
+mac=links[0]["address"].lower()
+observer_conf=Path("/etc/mediahub/port-sync.conf")
+if observer_conf.is_symlink() or not observer_conf.is_file():
+    raise SystemExit("Unsafe watcher configuration")
+watcher=dict(line.strip().split("=",1) for line in observer_conf.read_text().splitlines()
+             if "=" in line and not line.lstrip().startswith("#"))
+policy=watcher.get("MEDIAHUB_PORT_SYNC_POLICY_ID","stremio")
+watcher["MEDIAHUB_PORT_SYNC_HOST_MAC"]=mac
+if not re.fullmatch(r"[a-z][a-z0-9-]{1,31}",policy):
+    raise SystemExit("Invalid policy ID")
+observer_conf.write_text("".join(f"{k}={v}\n" for k,v in watcher.items()))
+observer_conf.chmod(0o600)
+file=Path("/etc/stremio-webadmin/port-sync.conf")
+file.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+expected={"ENABLED":"1","SOURCE":"observation","POLICY_ID":policy,"HOST_MAC":mac}
+if not re.fullmatch(r"[a-z][a-z0-9-]{1,31}",expected["POLICY_ID"]):
+    raise SystemExit("Invalid policy ID")
+if file.exists():
+    if file.is_symlink() or not stat.S_ISREG(file.stat().st_mode):
+        raise SystemExit("Unsafe Stremio port-sync config")
+    original=dict(line.strip().split("=",1) for line in file.read_text().splitlines()
+                  if "=" in line and not line.lstrip().startswith("#"))
+    for field in ("POLICY_ID","HOST_MAC"):
+        if original.get(field) and original[field]!=expected[field]:
+            raise SystemExit("Existing Stremio port-sync binding differs: "+field)
+    original.update(expected)
+    expected=original
+file.write_text("".join(f"{k}={v}\n" for k,v in expected.items()))
+file.chmod(0o600)
+print("Existing Stremio reconciler detected:",root)
+print("Stremio .env:",root/".env")
+print("Port authority: Stremio gateway-port-sync.py (SOURCE=observation)")
+PYCONFIG
+else
+  echo "Existing Stremio reconciler not detected. No .env or container changes." >&2
+fi
+echo "Installed observation-only Gateway watcher, timer DISABLED until authenticated credentials are provisioned."
+echo "Configure /etc/mediahub/port-sync.conf and install the trusted Gateway CA and dedicated status token."
+echo "After validation: systemctl enable --now mediahub-gateway-port-sync.timer"

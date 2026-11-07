@@ -48,6 +48,13 @@ def render(d: dict, central_dns=None) -> str:
     # A pilot may permit DNS to exactly one verified Docker bridge and Pi-hole.
     # This exception is intentionally inside the early boot guard chain:
     # an accept in a different nft base chain cannot override this drop.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("vpngw_management_access",
+        __import__("pathlib").Path(__file__).with_name("vpngw_management_access.py"))
+    mgmt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mgmt)
+    management_match = mgmt.match(host, mac, lan)
+    management_exception = ('  ' + management_match + ' counter accept\n') if management_match else ''
     dns_exception = ""
     if central_dns is not None:
         if not isinstance(central_dns, dict):
@@ -75,7 +82,7 @@ def render(d: dict, central_dns=None) -> str:
  chain forwarding {{
   type filter hook forward priority -205; policy accept;
   iifname "{lan}" ether saddr {mac} meta nfproto ipv6 counter drop
-{dns_exception}  iifname "{lan}" ether saddr {mac} meta nfproto ipv4 oifname != "{vpn}" counter drop
+{management_exception}{dns_exception}  iifname "{lan}" ether saddr {mac} meta nfproto ipv4 oifname != "{vpn}" counter drop
  }}
  chain local_dns {{
   type filter hook input priority -205; policy accept;

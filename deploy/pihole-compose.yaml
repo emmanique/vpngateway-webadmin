@@ -1,0 +1,27 @@
+name: vpngateway-dev-dns
+services:
+  pihole:
+    image: pihole/pihole@sha256:5b9c8cf51de7d6d3f2240dbe72baf5f06e1fd39cb4d77a99fab4fa13e23bd1be
+    container_name: vpngateway-dev-pihole
+    restart: unless-stopped
+    ports:
+      - "${VPNGW_LAN_IP:?Set management LAN IPv4}:53:53/tcp"
+      - "${VPNGW_LAN_IP:?Set management LAN IPv4}:53:53/udp"
+      - "${VPNGW_LAN_IP:?Set management LAN IPv4}:8081:80/tcp"
+    environment:
+      TZ: "Africa/Luanda"
+      FTLCONF_webserver_api_password: "${PIHOLE_WEBPASSWORD:?Set secret}"
+      FTLCONF_dns_listeningMode: "ALL"
+      FTLCONF_dns_upstreams: "1.1.1.1;9.9.9.9"
+      FTLCONF_dns_dnssec: "true"
+    volumes:
+      - /opt/vpngateway-dev/shared/pihole/etc-pihole:/etc/pihole
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "dig", "+short", "@127.0.0.1", "pi.hole"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

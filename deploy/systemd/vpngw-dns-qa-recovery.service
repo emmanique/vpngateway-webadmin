@@ -1,0 +1,17 @@
+[Unit]
+Description=Recover pending VPN Gateway DNS QA cutovers after reboot
+After=local-fs.target docker.service vpngw-policy-agent.service
+Wants=docker.service vpngw-policy-agent.service
+ConditionPathIsDirectory=/var/lib/vpngw-policy-agent/dns-qa-journals
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/vpngw-dns-qa-cutover.py recover
+User=root
+Group=root
+NoNewPrivileges=true
+ProtectHome=true
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=multi-user.target

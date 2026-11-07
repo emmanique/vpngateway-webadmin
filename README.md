@@ -16,16 +16,13 @@
 
 <p align="center"><img src="screenshots/overview.png" width="920" alt="Gateway VPN Multi WebAdmin overview"></p>
 
-## Release 1.0.4
+## Release 1.0.5 — MediaHub observer and WebAdmin routing correction
 
-**Installation fix:** `start.sh` is now executable directly after cloning or extracting the release archive. This is a corrective release of 1.0.3, with no changes to the VPN dataplane.
+**VPN Gateway Multi 1.0.5** includes per-host UPnP/NAT-PMP port ownership, dynamic Proton port reconciliation, OpenVPN/DNS robustness, independent MediaHub Stremio port synchronisation and a reusable local CI workflow.
 
+**Validation:** local CI is the project's approved quality gate while GitHub-hosted Actions is blocked by usage limits. The selected five jobs cover API, bilingual WebAdmin, VPN and WebAdmin images, and isolated Linux dataplane.
 
-**VPN Gateway Multi 1.0.3** prepares per-host UPnP/NAT-PMP port ownership, dynamic Proton port reconciliation, OpenVPN/DNS robustness, independent MediaHub Stremio port synchronisation and a reusable local CI workflow.
-
-**Validation:** local QA recorded 486 passing pytest tests and 77 passing subtests. The project owner accepted the real OpenVPN outage/recovery, client reboot/recovery and external-port reachability checks. GitHub-hosted Actions remains blocked by account spending limits; no passing hosted CI is claimed.
-
-**Scope and safeguards:** standard DNS remains routed to the selected VPN provider. The route-aware Pi-hole central DNS cutover is experimental and opt-in. NAT-PMP lease verification does not prove Internet peer reachability. Functional acceptance of OpenVPN recovery, client reboot/recovery, and external VPN port reachability was confirmed by the project owner. Published distribution packages and cryptographic manifests are a separate release-delivery gate.
+**Scope and safeguards:** standard DNS remains routed to the selected VPN provider. The route-aware Pi-hole central DNS cutover is experimental and opt-in. NAT-PMP lease verification does not prove Internet peer reachability. This release is built from an exact locally validated commit with packages and checksums.
 
 ## Features
 
@@ -170,13 +167,17 @@ npm run build
 
 New static labels require English mappings; duplicate legacy translations and PT/EN key mismatches fail the check. Dynamic messaging still merits UI-level regression tests in both languages.
 
-## Release quality checks
+## Local CI and release checks
 
-Five local CI jobs validate the DEV source: API, bilingual frontend, WebAdmin/VPN container builds and isolated Linux dataplane. The CI runner and fault-injection scripts remain in DEV, not in this public distribution.
+The local runner snapshots the exact commit, runs API, frontend, Docker and isolated-kernel tests, and produces per-job logs:
+
+```bash
+sudo bash scripts/run-local-ci.sh --job all --python /path/to/python-with-api-requirements-and-pytest
+```
 
 The default installer rebuilds the containers from this source and preserves persistent volumes. The read-only MediaHub status endpoint is **optional** and requires TLS and token configuration; the MediaHub job is installed on the separate Linux host. These integrations are not implicitly activated by an upgrade.
 
-Before upgrading, export a configuration backup; verify external DNS, host MAC identity, VPN fail-closed behaviour, selected port mappings and a tested rollback. See the [DEV QA record](https://github.com/emmanique/vpngateway-webamin-dev/blob/main/docs/qa/2026-11-04-vpn-dns-validation.md).
+Before upgrading, export a configuration backup; verify external DNS, host MAC identity, VPN fail-closed behaviour, selected port mappings and a tested rollback. See the [DEV QA record](docs/qa/2026-11-04-vpn-dns-validation.md).
 
 ## Project structure
 

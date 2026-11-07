@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Opt-in MediaHub reconciliation of the host-selected Gateway NAT-PMP port.
+"""Opt-in MediaHub observation of the host-selected Gateway NAT-PMP port.
 
 No fixed MediaHub IPv4 is stored. The right to change the libtorrent port
 belongs to the host policy ID AND MAC selected in Gateway -> Edit host.
 The port must be attested, current and identical for TCP and UDP.
-A provider lease renewal with the same port never recreates the container.
+Only publishes an authenticated observation; the Stremio reconciler owns
+all .env updates and container recreations. A provider lease renewal is
+observation-only and never recreates the container.
 
 Configuration is deliberately opt-in; do not enable before Gateway's selected
 host/reconciliation API and release have been validated.
@@ -25,11 +27,10 @@ import time
 from urllib.parse import urlparse
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
-KEY = "STREMIOSRV_BT_LISTEN_PORT"
-SERVICE = "stremio-libtorrent-server"
 MAC_RE = re.compile(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\Z")
 ID_RE = re.compile(r"[a-z][a-z0-9-]{1,31}\Z")
 LOCK_PATH = Path("/run/lock/mediahub-gateway-port-sync.lock")
+OBSERVATION = Path("/var/lib/stremio-webadmin/gateway-port-observation.json")
 
 
 class PortSyncError(RuntimeError):
@@ -199,112 +200,32 @@ def query_gateway(url: str, ca_file: Path, token_file: Path) -> dict:
     return result
 
 
-def run(*args: str, cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=str(cwd), capture_output=True,
-                          text=True, timeout=timeout, check=True)
-
-
-def compose_port(compose_dir: Path) -> int | None:
-    """Read the effective container port, not merely a desired .env value."""
-    result = run("docker", "inspect", SERVICE, cwd=compose_dir, timeout=15)
-    item = json.loads(result.stdout)[0]
-    vars_ = dict(v.split("=", 1) for v in item["Config"].get("Env", []) if "=" in v)
-    try:
-        port = int(vars_[KEY])
-    except (KeyError, ValueError):
-        return None
-    mapping = item["HostConfig"]["PortBindings"]
-    for proto in ("tcp", "udp"):
-        binds = mapping.get(f"{port}/{proto}", [])
-        if not any(str(b.get("HostPort")) == str(port) for b in binds):
-            return None
-    return port
-
-
-def rewrite_env(text: str, new_port: int) -> str:
-    lines = text.splitlines()
-    changed = False
-    output = []
-    for line in lines:
-        if re.match(r"^\s*" + KEY + r"\s*=", line):
-            if changed:
-                raise PortSyncError("Duplicate listen-port declarations")
-            output.append(f"{KEY}={new_port}")
-            changed = True
-        else:
-            output.append(line)
-    if not changed:
-        output.append(f"{KEY}={new_port}")
-    return "\n".join(output) + "\n"
-
-
-def atomic_env(path: Path, content: str):
-    if path.is_symlink():
-        raise PortSyncError("Refusing symlinked Compose .env")
-    fd, tmp = tempfile.mkstemp(prefix=".port-sync-", dir=path.parent)
+def publish_observation(port: int | None, *, policy: str, mac: str,
+                        host_ip: str, gateway: str, route: str | None,
+                        issued: float | None, expiry: float | None) -> None:
+    """Atomically communicate the verified allocation to Stremio's reconciler."""
+    OBSERVATION.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    if OBSERVATION.is_symlink():
+        raise PortSyncError("Refusing symlinked observer state")
+    data = {
+        "schema": 1, "port": port, "policy_id": policy,
+        "registered_mac": mac, "host_ip": host_ip,
+        "gateway": gateway, "route": route,
+        "lease_issued_at": issued, "lease_expires_at": expiry,
+        "observed_at": time.time(),
+    }
+    fd, name = tempfile.mkstemp(prefix=".gateway-port-", dir=OBSERVATION.parent)
     try:
         os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(tmp, path)
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            json.dump(data, out, sort_keys=True)
+            out.write("\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, OBSERVATION)
     finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-
-
-def apply_port(compose_dir: Path, port: int) -> str:
-    if not (1 <= port <= 65535):
-        raise PortSyncError("Invalid port")
-    compose = compose_dir / "compose.yaml"
-    env_path = compose_dir / ".env"
-    if not compose.is_file() or compose.is_symlink() or env_path.is_symlink():
-        raise PortSyncError("Untrusted Compose installation")
-    previous_port = compose_port(compose_dir)
-    if previous_port == port:
-        return "unchanged"
-    before = env_path.read_text(encoding="utf-8") if env_path.is_file() else None
-    after = rewrite_env(before or "", port)
-    try:
-        atomic_env(env_path, after)
-        run("docker", "compose", "config", "--quiet", cwd=compose_dir, timeout=15)
-        run("docker", "compose", "up", "-d", "--no-deps",
-            "--force-recreate", SERVICE, cwd=compose_dir)
-        for _ in range(12):
-            if compose_port(compose_dir) == port:
-                status = run("docker", "inspect", "--format",
-                             "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}",
-                             SERVICE, cwd=compose_dir, timeout=10).stdout.strip()
-                if status == "healthy":
-                    return "recreated"
-            time.sleep(3)
-        raise PortSyncError("Container did not become healthy on expected TCP/UDP port")
-    except (OSError, subprocess.SubprocessError, PortSyncError):
-        if before is None:
-            env_path.unlink(missing_ok=True)
-        else:
-            atomic_env(env_path, before)
-        try:
-            run("docker", "compose", "up", "-d", "--no-deps",
-                "--force-recreate", SERVICE, cwd=compose_dir)
-            if previous_port is None:
-                raise PortSyncError("Previous container port was unknown; rollback not verified")
-            for _ in range(12):
-                if compose_port(compose_dir) == previous_port:
-                    previous_health = run(
-                        "docker", "inspect", "--format",
-                        "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}",
-                        SERVICE, cwd=compose_dir, timeout=10,
-                    ).stdout.strip()
-                    if previous_health == "healthy":
-                        break
-                time.sleep(3)
-            else:
-                raise PortSyncError("Rollback container did not return to healthy previous port")
-        except (OSError, subprocess.SubprocessError, PortSyncError) as rollback:
-            raise PortSyncError("Rollback verification failed; manual intervention required") from rollback
-        raise
+        if os.path.exists(name):
+            os.unlink(name)
 
 
 def main() -> int:
@@ -315,7 +236,6 @@ def main() -> int:
     mac = os.environ["MEDIAHUB_PORT_SYNC_HOST_MAC"].lower()
     ca = Path(os.environ["MEDIAHUB_PORT_SYNC_CA_FILE"])
     token_file = Path(os.environ["MEDIAHUB_PORT_SYNC_TOKEN_FILE"])
-    compose_dir = Path(os.environ["MEDIAHUB_PORT_SYNC_COMPOSE_DIR"])
     api_port = int(os.environ.get("MEDIAHUB_PORT_SYNC_API_PORT", "9443"))
     api_path = os.environ.get("MEDIAHUB_PORT_SYNC_API_PATH",
                               "/api/v1/port-forward/desired")
@@ -333,6 +253,8 @@ def main() -> int:
         port = select_port(snapshot, expected_policy=policy, expected_mac=mac,
                            local_addresses=ips, now=time.time())
         if port is None:
+            publish_observation(None, policy=policy, mac=mac, host_ip=address,
+                                gateway=gateway, route=None, issued=None, expiry=None)
             print(json.dumps({"result": "no_verified_port_change",
                               "gateway": gateway, "interface": interface}))
             return 0
@@ -342,9 +264,14 @@ def main() -> int:
             active_gateway(local_address=address, expected_mac=mac, probe=probe)
                 != (gateway, interface)):
             raise PortSyncError("Host IP or gateway changed during reconciliation")
-        print(json.dumps({"result": apply_port(compose_dir, port),
-                          "port": port, "host_policy": policy,
-                          "gateway": gateway, "interface": interface}))
+        runtime = snapshot.get("runtime") or {}
+        publish_observation(port, policy=policy, mac=mac, host_ip=address,
+                            gateway=gateway, route=(snapshot.get("selected_host") or {}).get("route"),
+                            issued=runtime.get("updated_at"),
+                            expiry=runtime.get("lease_expires_at"))
+        print(json.dumps({"result": "port_observed", "port": port,
+                          "host_policy": policy, "gateway": gateway,
+                          "interface": interface, "stremio_unchanged": True}))
     return 0
 
 
