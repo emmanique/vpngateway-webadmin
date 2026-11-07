@@ -14,8 +14,8 @@ def git(*args):
 def main():
     sha = git("rev-parse", "HEAD").decode().strip()
     version = (ROOT / "VERSION").read_text().strip()
-    prefix = f"gateway-vpn-multi-{version}-dev"
-    out = ROOT / "releases" / "dev"
+    prefix = f"gateway-vpn-multi-{version}-deployment"
+    out = ROOT / "releases" / "public-build"
     out.mkdir(parents=True, exist_ok=True)
     names = git("ls-files", "-z").decode().split("\0")
     source = {name: git("show", f"HEAD:{name}") for name in names
