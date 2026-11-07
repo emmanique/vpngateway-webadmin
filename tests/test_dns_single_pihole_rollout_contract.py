@@ -42,8 +42,14 @@ class SinglePiHoleDNSRollout(unittest.TestCase):
         self.assertIn("DNS-over-HTTPS (port 443)",ui)
 
     def test_no_workflow_changes_published_repo(self):
-        release=(ROOT/".github/workflows/ci.yml").read_text()
-        self.assertIn("scripts/test-dns-origin-dnat-netns.py",release)
+        workflow=ROOT/".github/workflows/ci.yml"
+        if workflow.is_file():
+            self.assertIn("scripts/test-dns-origin-dnat-netns.py",workflow.read_text())
+        else:
+            # Public clone explicitly carries no GitHub Actions; local QA is authoritative.
+            self.assertFalse((ROOT/".github/workflows").exists())
+            local_ci=(ROOT/"scripts/run-local-ci.sh").read_text()
+            self.assertIn("scripts/test-dns-origin-dnat-netns.py",local_ci)
 
 
 if __name__=="__main__":
