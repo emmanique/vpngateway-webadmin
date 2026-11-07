@@ -79,7 +79,10 @@ if observer_conf.is_symlink() or not observer_conf.is_file():
     raise SystemExit("Unsafe watcher configuration")
 watcher=dict(line.strip().split("=",1) for line in observer_conf.read_text().splitlines()
              if "=" in line and not line.lstrip().startswith("#"))
-policy=watcher.get("MEDIAHUB_PORT_SYNC_POLICY_ID","stremio")
+policy=os.environ.get("MEDIAHUB_PORT_SYNC_POLICY_ID") or watcher.get("MEDIAHUB_PORT_SYNC_POLICY_ID","stremio")
+if not re.fullmatch(r"[a-z][a-z0-9-]{1,31}",policy):
+    raise SystemExit("Invalid Gateway host policy ID")
+watcher["MEDIAHUB_PORT_SYNC_POLICY_ID"]=policy
 watcher["MEDIAHUB_PORT_SYNC_HOST_MAC"]=mac
 if not re.fullmatch(r"[a-z][a-z0-9-]{1,31}",policy):
     raise SystemExit("Invalid policy ID")

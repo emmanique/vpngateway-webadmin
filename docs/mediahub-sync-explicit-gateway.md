@@ -44,9 +44,14 @@ MEDIAHUB_PORT_SYNC_GATEWAY_IP=192.168.1.231 \
   MEDIAHUB_PORT_SYNC_CA_FILE=/etc/mediahub/gateway-ca.pem \
   bash /tmp/mediahub-bootstrap.sh --verify-only
 MEDIAHUB_PORT_SYNC_GATEWAY_IP=192.168.1.231 \
+  MEDIAHUB_PORT_SYNC_POLICY_ID=stremioserver \
   MEDIAHUB_PORT_SYNC_CA_FILE=/etc/mediahub/gateway-ca.pem \
   bash /tmp/mediahub-bootstrap.sh --install
 ```
+
+Replace `stremioserver` with the policy ID actually assigned to this host
+in the Gateway's Hosts and Routes screen. The installer writes the same
+policy ID into both observer and reconciler configuration files.
 
 The bootstrap uses port 443 for bundle delivery by default, enforces TLS
 validation and SHA-256 manifest verification, and records the configured

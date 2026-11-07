@@ -2,4 +2,4 @@
 62bb848483173b178c86e90721f9bcd0d8ca30e08819c928e0e7b595fd76cc14  deploy/systemd/mediahub-gateway-port-sync.service
 aa98c5655ccd73e27e224cc2f00346b9991798b6ba8215c49d636038b1cee1a2  deploy/systemd/mediahub-gateway-port-sync.timer
 2d811f45aead0ecc4b816dac53e6079c547bd4ea44b1b8c247e9a59549ae2389  deploy/examples/mediahub-port-sync.conf.example
-54ad05852e9ae2cc27709cfcc812834fbf4d3a90d6e32a52ea7c828ae1d2a415  installers/install-mediahub-gateway-port-sync-linux.sh
+5303ec16e090f161a2a2b6af7771eb5a289d94a305ada7477ccd85ab41fbd497  installers/install-mediahub-gateway-port-sync-linux.sh

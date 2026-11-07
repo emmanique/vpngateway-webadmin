@@ -72,6 +72,8 @@ done < "$TEMP/SHA256SUMS"
 echo "Verified MediaHub port-sync bundle from configured VPN Gateway: $GW:$WEB_PORT"
 if [[ "$MODE" == "--install" ]]; then
   export MEDIAHUB_PORT_SYNC_GATEWAY_IP="$GW"
+  # Optional explicit policy ID must match the Gateway's selected host.
+  # It is never inferred from the Linux default router.
   bash "$TEMP/installers/install-mediahub-gateway-port-sync-linux.sh"
   echo "Service installed but NOT enabled. Configure /etc/mediahub/port-sync.conf."
 else
