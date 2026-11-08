@@ -19,12 +19,18 @@
 - Construção de arquivos tar.gz e ZIP a partir de git HEAD: PASS.
 - Manifesto e SHA-256 dos dois arquivos: PASS.
 
+## Actualização do contrato de imagens e nova regressão
+
+A revisão 1178cbb31c1d9ecd7d362f178f87f81ed53b7806 actualiza o Docker Compose para gerar as tags a partir de VERSION (1.0.6-rc.1) e não das tags históricas 1.0.3. O Compose resolvido com os overlays de gestão, descoberta, política e Pi-hole confirmou ambas as imagens locais versionadas. A suite Python 3.12 foi reexecutada com **360 testes aprovados** e a imagem Pi-hole fixada por digest foi verificada no registry.
+
+Esta é a revisão de código recomendada para a QA de fresh install. O documento e os arquivos de distribuição poderão ter SHA posterior por conterem provas e manifests, mas o código aplicacional validado corresponde à revisão acima.
+
 ## Pacotes QA produzidos localmente
 
 - gateway-vpn-multi-1.0.6-rc.1-deployment.tar.gz — sha256 a4702da55fc4f55efc1a397023a42bdf7688e535fd9315442bba7ee568f29053
 - gateway-vpn-multi-1.0.6-rc.1-deployment.zip — sha256 7a7fe6911df151775da85d570200509ec339f7405d2b569a3b81dec019640ac8
 
-Esses arquivos foram compilados e verificados num host QA, mas **ainda não foram anexados a um GitHub Release ou tag formal**. Para testar de forma reproduzível num terceiro servidor sem os pacotes, clonar a origem pública e fazer checkout do commit acima, depois executar sudo ./start.sh com a interface e o IP LAN reais. Não usar uma release 1.0.5 para validar o bootstrap actualizado.
+Os hashes acima pertencem ao snapshot anterior 4faeda2 (antes da correcção das tags das imagens) e não devem ser usados como pacotes finais. Esses arquivos foram compilados e verificados num host QA, mas **ainda não foram anexados a um GitHub Release ou tag formal**. Para testar de forma reproduzível num terceiro servidor sem os pacotes, clonar a origem pública e fazer checkout do commit acima, depois executar sudo ./start.sh com a interface e o IP LAN reais. Não usar uma release 1.0.5 para validar o bootstrap actualizado.
 
 ## Limites do certificado QA
 
