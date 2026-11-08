@@ -22,6 +22,14 @@ class PublicFreshInstallContract(unittest.TestCase):
         self.assertNotIn("printf 'PIHOLE_WEBPASSWORD=\\n' > deploy/.env", script)
         self.assertIn('chmod 0600 deploy/.env', script)
 
+    def test_runtime_images_match_repository_version(self):
+        launcher = (ROOT / "start.sh").read_text()
+        compose = (ROOT / "deploy/compose.yml").read_text()
+        self.assertIn('export VPNGW_IMAGE_TAG="$(cat VERSION)"', launcher)
+        self.assertIn('image: vpngateway/webadmin:${VPNGW_IMAGE_TAG:-1.0.6-rc.1}', compose)
+        self.assertIn('image: vpngateway/vpn:${VPNGW_IMAGE_TAG:-1.0.6-rc.1}', compose)
+        self.assertNotIn('image: vpngateway/webadmin:1.0.3', compose)
+
     def test_existing_env_is_not_overwritten(self):
         script = (ROOT / "start.sh").read_text()
         self.assertRegex(script, r'if \[\[ ! -f deploy/\.env \]\]; then')
