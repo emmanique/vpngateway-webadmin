@@ -35,7 +35,18 @@ if ! dependencies_ok; then
   apt-get update
   apt-get install -y docker.io iproute2 nftables openssl python3 openvpn wireguard-tools iputils-ping curl
   if ! docker compose version >/dev/null 2>&1; then
-    apt-get install -y docker-compose-v2 || apt-get install -y docker-compose-plugin
+    # Debian 13 ships Compose v2 as docker-compose; Ubuntu commonly uses
+    # docker-compose-v2; upstream Docker uses docker-compose-plugin.
+    compose_installed=0
+    for compose_package in docker-compose-v2 docker-compose-plugin docker-compose; do
+      if apt-get install -y "$compose_package"; then
+        if docker compose version >/dev/null 2>&1; then
+          compose_installed=1
+          break
+        fi
+      fi
+    done
+    [[ "$compose_installed" -eq 1 ]] || { echo "Docker Compose v2 not available after APT installation" >&2; exit 1; }
   fi
   dependencies_ok || { echo "Falhou a instalação das dependências" >&2; exit 1; }
 fi
