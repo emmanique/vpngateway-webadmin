@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Non-login root shells (remote agents, cloud-init, automation) may omit sbin.
+# nft and OpenVPN are installed under /usr/sbin on Debian/Ubuntu.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 cd "$(dirname "$(readlink -f "$0")")"
 PROJECT_ROOT="$PWD"
 # Ensure a fresh clone builds its exact source version, not a historical image tag.
