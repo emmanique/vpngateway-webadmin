@@ -2,6 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 PROJECT_ROOT="$PWD"
+# Ensure a fresh clone builds its exact source version, not a historical image tag.
+export VPNGW_IMAGE_TAG="$(cat VERSION)"
 usage() { echo "Utilização: sudo ./start.sh [--check] [--lan-interface IFACE] [--lan-ip IPv4]"; }
 CHECK=0
 LAN_IFACE="${VPNGW_LAN_INTERFACE:-}"
