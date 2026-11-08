@@ -6,6 +6,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class PublicFreshInstallContract(unittest.TestCase):
+    def test_non_login_root_shell_has_sbin_path(self):
+        script = (ROOT / "start.sh").read_text()
+        self.assertIn('export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:', script)
+        self.assertLess(script.index('export PATH='), script.index('dependencies_ok()'))
+
     def test_compose_package_fallback_on_debian13(self):
         script = (ROOT / "start.sh").read_text()
         self.assertRegex(script, r"for compose_package in docker-compose-v2 docker-compose-plugin docker-compose")
