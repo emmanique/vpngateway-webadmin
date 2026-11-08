@@ -25,6 +25,10 @@ remains on port 9443 once provisioned. See
 [MediaHub independent Gateway installation](docs/mediahub-sync-explicit-gateway.md).
 The observer is disabled until credentials are provisioned.
 
+## Release candidata 1.0.6-rc.1 — fresh install em ambientes novos
+
+A branch pública `main` contém as correcções posteriores à tag `v1.0.5`: instalação de Docker Compose v2 em Debian 13, validação de Buildx, segredo Pi-hole gerado na primeira instalação e bootstrap MediaHub com endereço independente do router predefinido. Para a QA integral, usar uma revisão exacta desta branch, não os pacotes antigos da release `v1.0.5`. As imagens WebAdmin/VPN são construídas a partir do clone público; não dependem de imagens pré-instaladas. As provas de campo continuam pendentes nas máquinas novas.
+
 ## Release 1.0.5 — MediaHub observer and WebAdmin routing correction
 
 **VPN Gateway Multi 1.0.5** includes per-host UPnP/NAT-PMP port ownership, dynamic Proton port reconciliation, OpenVPN/DNS robustness, independent MediaHub Stremio port synchronisation and a reusable local CI workflow.
@@ -116,7 +120,9 @@ Linux with systemd and administrative access, a private LAN IPv4 address, and cl
 ```bash
 git clone https://github.com/emmanique/vpngateway-webadmin.git
 cd vpngateway-webadmin
-./start.sh --check
+# Para QA, fixar a revisão exacta publicada no plano de testes.
+# Numa máquina sem Docker/Compose pré-instalados, --check devolve
+# dependências em falta; isto é diagnóstico, não substitui o instalador.
 sudo ./start.sh
 ```
 
@@ -131,7 +137,7 @@ sudo ./start.sh --lan-interface enp2s0 --lan-ip 192.168.50.2
 | WebAdmin | `https://<gateway-lan-ip>/` |
 | Pi-hole administration | `https://<gateway-lan-ip>:8443/` |
 
-The launcher discovers the management IPv4, installs local agents, prepares a self-signed TLS certificate and Pi-hole secret, and deploys the containers. For routine upgrades, rerun `sudo ./start.sh` rather than deleting persistent volumes. Never commit `deploy/.env`, VPN private keys, certificates, credential files or backup archives.
+The launcher discovers the management IPv4, installs local agents, prepares a self-signed TLS certificate and a **new random Pi-hole password stored in deploy/.env (0600)**, and deploys the containers. Existing deploy/.env is preserved during upgrades. For routine upgrades, rerun `sudo ./start.sh` rather than deleting persistent volumes. Never commit `deploy/.env`, VPN private keys, certificates, credential files or backup archives.
 
 ## Configuration workflow
 
