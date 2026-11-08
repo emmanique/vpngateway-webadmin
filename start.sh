@@ -21,7 +21,7 @@ dependencies_ok() {
   for binary in docker ip openssl nft systemctl python3 openvpn wg ping; do
     command -v "$binary" >/dev/null || return 1
   done
-  docker compose version >/dev/null 2>&1
+  docker compose version >/dev/null 2>&1 && docker buildx version >/dev/null 2>&1
 }
 if ! dependencies_ok; then
   if ((CHECK)); then
@@ -47,6 +47,16 @@ if ! dependencies_ok; then
       fi
     done
     [[ "$compose_installed" -eq 1 ]] || { echo "Docker Compose v2 not available after APT installation" >&2; exit 1; }
+  fi
+  if ! docker buildx version >/dev/null 2>&1; then
+    buildx_installed=0
+    for buildx_package in docker-buildx docker-buildx-plugin; do
+      if apt-get install -y "$buildx_package" && docker buildx version >/dev/null 2>&1; then
+        buildx_installed=1
+        break
+      fi
+    done
+    [[ "$buildx_installed" -eq 1 ]] || { echo "Docker Buildx plugin unavailable after APT installation" >&2; exit 1; }
   fi
   dependencies_ok || { echo "Falhou a instalação das dependências" >&2; exit 1; }
 fi
@@ -81,8 +91,10 @@ fi
 [[ "$EUID" -eq 0 ]] || { echo "Execute com sudo para instalar os serviços de sistema" >&2; exit 1; }
 umask 077
 if [[ ! -f deploy/.env ]]; then
-  printf 'PIHOLE_WEBPASSWORD=\n' > deploy/.env
-  echo "Configuração criada: administração Pi-hole sem palavra-passe na LAN."
+  PIHOLE_FRESH_PASSWORD="$(openssl rand -hex 24)"
+  printf 'PIHOLE_WEBPASSWORD=%s\n' "$PIHOLE_FRESH_PASSWORD" > deploy/.env
+  echo "Configuração criada: password Pi-hole aleatória e persistida em deploy/.env (mode 0600)."
+  unset PIHOLE_FRESH_PASSWORD
 fi
 chmod 0600 deploy/.env
 install -d -m 0700 deploy/tls-local
