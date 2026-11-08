@@ -40,3 +40,12 @@ Os hashes acima pertencem ao snapshot anterior 4faeda2 (antes da correcção das
 - Nenhuma alteração no Gateway de produção ou no Stremio de produção foi executada por este ensaio.
 
 **Decisão:** pronto para ensaio de fresh install controlado, NÃO aprovado para GA/produção.
+
+## Verificação de reproducibilidade e QA operacional adicional
+
+Em 2026-11-08 a rotina scripts/build-release-packages.py foi corrigida para gravar metadados gzip determinísticos (mtime=0, sem filename embutido). **Duas compilações sucessivas da mesma revisão 4ea8760846e316cdd090077d5661a9a8334bcab2 produziram hashes idênticos:**
+
+- tar.gz: e1ed361a610b9367454374c761a4bfe485cf4157065e936fdc7a8a6ec62d7663
+- zip: 1fc6161e01e75a81281255ed7e80f4f67124d54ad289260dfd9616e915e6e8c6
+
+Este teste é uma prova de build reprodutível no mesmo ambiente, não uma release GitHub publicada. O manifesto gerado no host QA deve ser preservado com a revisão de código exacta. A última distribuição oficial anterior continua v1.0.5. O desenvolvimento QA é mantido em main como 1.0.6-rc.1 até ser disponibilizada uma tag/release e serem aprovados os testes nas máquinas novas.
