@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build DEV archives from tracked source with exact commit provenance."""
+import gzip
 import hashlib
 import io
 import json
@@ -23,7 +24,8 @@ def main():
     source["SOURCE_COMMIT"] = (sha + "\n").encode()
     tarpath = out / (prefix + ".tar.gz")
     zippath = out / (prefix + ".zip")
-    with tarfile.open(tarpath, "w:gz") as tar, zipfile.ZipFile(zippath, "w", zipfile.ZIP_DEFLATED) as archive:
+    # Explicit gzip mtime=0 and filename="" make tarball bytes independent of build time.
+    with tarpath.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar, zipfile.ZipFile(zippath, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, data in sorted(source.items()):
             arcname = prefix + "/" + name
             info = tarfile.TarInfo(arcname)
