@@ -25,6 +25,14 @@ remains on port 9443 once provisioned. See
 [MediaHub independent Gateway installation](docs/mediahub-sync-explicit-gateway.md).
 The observer is disabled until credentials are provisioned.
 
+## Release estável v1.0.7 — Pi-hole sem password e estado DNS
+
+A instalação nova configura o Pi-hole v6 **sem password**, para que o WebAdmin consiga consultar versão, DNS e estatísticas através da rede Docker interna. O endpoint DNS é `/api/dns/blocking`; os contadores do dashboard são obtidos de `/api/stats/summary`. O WebAdmin comunica a versão `1.0.7` da distribuição. A configuração `deploy/.env` já existente não é substituída durante upgrades.
+
+**Segurança:** a administração do Pi-hole em `https://IP-DO-GATEWAY:8443/admin/` fica sem autenticação e deve ser acedida **exclusivamente numa LAN de confiança**. Nunca encaminhe/publicite TCP/8443 na WAN. Para um cenário não confiável, definir manualmente uma password e introduzir autenticação de API no Gateway antes de activar esse modo. Esta versão não certifica instalações expostas à Internet.
+
+**Release:** [v1.0.7](https://github.com/emmanique/vpngateway-webadmin/releases/tag/v1.0.7). Consultar [notas de validação](docs/releases/v1.0.7.md).
+
 ## Release estável v1.0.6 — instalação e packages
 
 **Release publicada:** [v1.0.6](https://github.com/emmanique/vpngateway-webadmin/releases/tag/v1.0.6), com archives `.zip`, `.tar.gz` e `manifest.json` (SHA-256). Para instalar a partir de código, utilizar a tag `v1.0.6` ou verificar `VERSION=1.0.6` em `main`; as imagens WebAdmin/VPN são construídas localmente a partir da revisão seleccionada. Não utilizar os packages antigos `v1.0.5` como se fossem a revisão actual.

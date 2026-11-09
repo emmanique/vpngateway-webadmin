@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from contextlib import closing
 from pathlib import Path
 
-app = FastAPI(title="VPN Gateway Manager API", version="1.0.3")
+app = FastAPI(title="VPN Gateway Manager API", version=os.environ.get("VPNGW_RELEASE_VERSION", "1.0.7"))
 _lock = RLock()
 _discovery_lock = Lock()
 _connections = {}
@@ -1553,7 +1553,7 @@ def dns_summary():
               "admin_url": admin_url,
               "scope": "isolated", "routing_managed_by": "Gateway VPN Multi",
               "host_dns_changed": False, "client_dns_changed": False}
-    for path, field in (("/api/info/version", "version"), ("/api/dns/status", "dns_enabled")):
+    for path, field in (("/api/info/version", "version"), ("/api/dns/blocking", "dns_enabled")):
         try:
             with urllib.request.urlopen("http://pihole" + path, timeout=2) as response:
                 payload = json.loads(response.read(65536))
@@ -1561,7 +1561,7 @@ def dns_summary():
             if field == "version":
                 result[field] = str(payload.get("version", {}).get("core", {}).get("local", {}).get("version") or "Indisponível")
             else:
-                result[field] = payload.get("dns", {}).get("blocking") if isinstance(payload.get("dns"), dict) else None
+                result[field] = (payload.get("blocking") == "enabled") if payload.get("blocking") in ("enabled", "disabled") else None
         except Exception:
             continue
     return result
@@ -2783,7 +2783,7 @@ def wireguard_profiles_status():
 def gateway_live():
     """Read-only state built from saved policies, never sample client IDs."""
     policies=list_policies()
-    return {'version':'1.0.3',
+    return {'version':app.version,
             'scope':os.environ.get('VPNGW_RUNTIME_SCOPE','host'),
             'clients':{p['host_ip']:{'route':p['destination']} for p in policies},
             'wireguard':{'interface_present':any(p.get('protocol')=='wireguard' and p.get('connected')

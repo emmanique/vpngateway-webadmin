@@ -5,13 +5,14 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile.webadmin
-    image: vpngateway/webadmin:${VPNGW_IMAGE_TAG:-1.0.6}
+    image: vpngateway/webadmin:${VPNGW_IMAGE_TAG:-1.0.7}
     restart: unless-stopped
     ports:
       - '127.0.0.1:18080:80'
     environment:
       VPNGW_DB_PATH: /data/gateway.sqlite3
       VPNGW_RUNTIME_SCOPE: container
+      VPNGW_RELEASE_VERSION: "${VPNGW_IMAGE_TAG:-1.0.7}"
     volumes:
       - webadmin-data:/data
     security_opt:
@@ -35,7 +36,7 @@ services:
   vpn:
     build:
       context: ../apps/vpn
-    image: vpngateway/vpn:${VPNGW_IMAGE_TAG:-1.0.6}
+    image: vpngateway/vpn:${VPNGW_IMAGE_TAG:-1.0.7}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

@@ -21,10 +21,10 @@ class PublicFreshInstallContract(unittest.TestCase):
         self.assertIn('docker buildx version >/dev/null 2>&1', script)
         self.assertIn('docker-buildx-plugin', script)
 
-    def test_new_install_never_creates_blank_pihole_password(self):
+    def test_fresh_install_uses_passwordless_lan_pihole(self):
         script = (ROOT / "start.sh").read_text()
-        self.assertIn('openssl rand -hex 24', script)
-        self.assertNotIn("printf 'PIHOLE_WEBPASSWORD=\\n' > deploy/.env", script)
+        self.assertIn("printf 'PIHOLE_WEBPASSWORD=\\n' > deploy/.env", script)
+        self.assertNotIn('PIHOLE_FRESH_PASSWORD', script)
         self.assertIn('chmod 0600 deploy/.env', script)
 
     def test_runtime_images_match_repository_version(self):
@@ -39,7 +39,7 @@ class PublicFreshInstallContract(unittest.TestCase):
     def test_existing_env_is_not_overwritten(self):
         script = (ROOT / "start.sh").read_text()
         self.assertRegex(script, r'if \[\[ ! -f deploy/\.env \]\]; then')
-        self.assertIn('PIHOLE_FRESH_PASSWORD', script)
+        self.assertIn("if [[ ! -f deploy/.env ]]; then", script)
 
 
 if __name__ == "__main__":

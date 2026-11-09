@@ -14,11 +14,11 @@ class QAInstallReleaseContract(unittest.TestCase):
         self.assertIn('!deploy/webadmin-nginx.conf', rules)
         self.assertIn('!deploy/webadmin-lan-https.conf', rules)
 
-    def test_pihole_install_generates_password_once(self):
+    def test_pihole_install_is_passwordless_on_lan_only(self):
         compose = (ROOT / 'deploy/compose.yml').read_text()
         self.assertIn('FTLCONF_webserver_api_password: "${PIHOLE_WEBPASSWORD:-}"', compose)
         installer = (ROOT / 'start.sh').read_text()
-        self.assertIn('PIHOLE_FRESH_PASSWORD="$(openssl rand -hex 24)"', installer)
+        self.assertIn("printf 'PIHOLE_WEBPASSWORD=\\n' > deploy/.env", installer)
         self.assertIn('if [[ ! -f deploy/.env ]]; then', installer)
         self.assertNotIn('Segredo inválido', installer)
         self.assertIn('PIHOLE_WEBPASSWORD=', (ROOT / 'deploy/.env.example').read_text())

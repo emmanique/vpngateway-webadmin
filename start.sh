@@ -96,10 +96,10 @@ fi
 [[ "$EUID" -eq 0 ]] || { echo "Execute com sudo para instalar os serviços de sistema" >&2; exit 1; }
 umask 077
 if [[ ! -f deploy/.env ]]; then
-  PIHOLE_FRESH_PASSWORD="$(openssl rand -hex 24)"
-  printf 'PIHOLE_WEBPASSWORD=%s\n' "$PIHOLE_FRESH_PASSWORD" > deploy/.env
-  echo "Configuração criada: password Pi-hole aleatória e persistida em deploy/.env (mode 0600)."
-  unset PIHOLE_FRESH_PASSWORD
+  # Dedicated management page is published only on the configured LAN address.
+  # Empty password allows the WebAdmin read-only status API to work on Pi-hole v6.
+  printf 'PIHOLE_WEBPASSWORD=\n' > deploy/.env
+  echo "Pi-hole sem password para LAN de confiança; não publique a porta 8443 na WAN."
 fi
 chmod 0600 deploy/.env
 install -d -m 0700 deploy/tls-local
