@@ -339,6 +339,25 @@ def remove_rules(pid):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def ensure_blocked_management(pid, plan):
+    """Restore exact host-to-WebAdmin HTTPS exemption on install/recovery.
+
+    No general LAN or Internet ACCEPT is added: only the Docker HTTPS proxy
+    destination, scoped to source MAC, IP and LAN interface.
+    """
+    if plan.get("destination") != "blocked":
+        return
+    mac = plan.get("registered_mac")
+    if not mac:
+        raise ValueError("Blocked management exemption requires a registered MAC")
+    import importlib.util
+    source = Path(__file__).with_name("vpngw_management_access.py")
+    spec = importlib.util.spec_from_file_location("vpngw_blocked_management", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.ensure(pid, plan["host"], mac, plan["lan"])
+
+
 def install_rules(plan, pid):
     name = chain_name(pid)
     host = plan["host"]
@@ -367,6 +386,7 @@ def install_rules(plan, pid):
     if plan["destination"] == "blocked":
         run(NFT, "add", "rule", "ip", "filter", name,
             "iifname", lan, "ip", "saddr", host, "counter", "drop")
+        ensure_blocked_management(pid, plan)
         return
     run(NFT, "add", "rule", "ip", "filter", name,
         "iifname", lan, "oifname", wan, "ip", "saddr", host,
@@ -1660,6 +1680,9 @@ def recover_active_policy(pid, state):
                 install_rules(state["plan"], pid)
             if mac:
                 _set_kernel_identity_guard(pid, mac, state["plan"])
+            # A healthy blocked chain can survive an agent restart while the
+            # management exception and its host route have disappeared.
+            ensure_blocked_management(pid, state["plan"])
             if (not inspect_rules(pid) or not identity_guard_ok(pid, mac)
                     or (mac and not renumber_guard_ok(pid, mac, state["plan"]))):
                 raise ValueError("Regras IP/MAC não confirmadas após reposição")
@@ -1718,6 +1741,24 @@ def restore_boot_vpn_profiles():
             continue
 
 
+def reconcile_management_loop(interval=60):
+    """Reconcile blocked-client HTTPS on Docker proxy IP changes.
+
+    A container recreate can change the Docker bridge destination without
+    restarting the policy agent. Rules are exact; no general allowlist is used.
+    """
+    while True:
+        time.sleep(interval)
+        try:
+            with LOCK, file_lock():
+                for path in BASE.glob("*.json"):
+                    record = json.loads(path.read_text())
+                    if record.get("status") == "active":
+                        ensure_blocked_management(path.stem, record.get("plan") or {})
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+            print("blocked management reconcile failed: " + str(exc), flush=True)
+
+
 def serve():
     directory = Path(SOCKET).parent
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1749,6 +1790,7 @@ def serve():
             reconcile_forwarding_owner()
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
+    threading.Thread(target=reconcile_management_loop, daemon=True).start()
     with Server(SOCKET, Handler) as server:
         os.chmod(SOCKET, 0o600)
         server.serve_forever()

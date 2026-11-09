@@ -74,11 +74,21 @@ def ensure(policy_id, host, mac, lan):
     if "dev br-" not in route and "dev docker0" not in route:
         raise ValueError("Management proxy is not routed through a Docker bridge")
     nft = "/usr/sbin/nft"
-    listing = subprocess.run([nft, "list", "chain", "ip", "filter", "DOCKER-USER"],
+    listing = subprocess.run([nft, "-a", "list", "chain", "ip", "filter", "DOCKER-USER"],
                              capture_output=True, text=True, check=True, timeout=6).stdout
     marker = "vpngw_management_" + policy_id.replace("-", "_")
-    if marker not in listing:
-        batch = f'insert rule ip filter DOCKER-USER {clause} counter accept comment "{marker}"\n'
+    owned = [row for row in listing.splitlines() if 'comment "' + marker + '"' in row]
+    exact = [row for row in owned if clause in row]
+    if len(exact) != 1 or len(owned) != 1:
+        # Reconcile stale Docker bridge IPs or missing exceptions, while only
+        # deleting rules carrying the controller's own exact policy marker.
+        batch = ""
+        for row in owned:
+            found = re.search(r"# handle (\d+)\s*$", row)
+            if not found:
+                raise ValueError("Unidentifiable management rule; fail closed")
+            batch += f'delete rule ip filter DOCKER-USER handle {found.group(1)}\n'
+        batch += f'insert rule ip filter DOCKER-USER {clause} counter accept comment "{marker}"\n'
         for args in ([nft, "-c", "-f", "-"], [nft, "-f", "-"]):
             subprocess.run(args, input=batch, text=True, capture_output=True,
                            check=True, timeout=6)
