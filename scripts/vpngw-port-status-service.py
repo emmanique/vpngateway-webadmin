@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import socket
 import stat
 import ssl
@@ -25,6 +26,7 @@ import time
 from urllib.request import Request, urlopen
 
 URI = "/api/v1/port-forward/desired"
+HOST_URI = "/api/v1/port-forward/authorized-host"
 MAX_BYTES = 65536
 TOKEN_FILE = Path("/etc/vpngw-port-status/token")
 CERT_FILE = Path("/etc/vpngw-port-status/lan.crt")
@@ -123,6 +125,45 @@ def fetch_observation(now: float, upstream: str = UPSTREAM) -> dict:
     return sanitized_observation(json.loads(data), now)
 
 
+def authorized_lan_host(raw: dict, *, source_ip: str, interface: str,
+                        neighbor_check=None) -> bool:
+    """Return only this authorised host's status, never a privileged token.
+
+    The trust boundary is a managed LAN with anti-spoofing at its access layer.
+    IP/MAC are admission checks, NOT cryptographic device authentication.
+    """
+    host=raw.get("selected_host") or {}
+    selected=host.get("host_ip")
+    mac=str(host.get("registered_mac") or "").lower()
+    policy=host.get("policy_id")
+    forwarded=raw.get("forwarding") or {}
+    if (not isinstance(selected,str) or source_ip!=selected
+        or not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}",mac)
+        or not isinstance(policy,str) or forwarded.get("policy_id")!=policy
+        or not raw.get("rules_applied")):
+        return False
+    if neighbor_check is None:
+        neighbor_check=read_neighbor
+    return neighbor_check(source_ip,interface)==mac
+
+
+def read_neighbor(ip: str, interface: str) -> str | None:
+    """Kernel neighbour MAC must agree with the Gateway's selected policy."""
+    try:
+        addr=ipaddress.IPv4Address(ip)
+        if not addr.is_private or addr.is_loopback:
+            return None
+        result=subprocess.run(["/usr/sbin/ip","-j","neigh","show","to",ip,
+                               "dev",interface],check=True,capture_output=True,
+                              text=True,timeout=3)
+        rows=json.loads(result.stdout)
+        if len(rows)!=1 or "FAILED" in rows[0].get("state",[]):
+            return None
+        return str(rows[0].get("lladdr","")).lower()
+    except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "VPNGW-PortStatus"
     sys_version = ""
@@ -141,6 +182,27 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(resource)))
             self.end_headers()
             self.wfile.write(resource)
+            return
+        if self.path == HOST_URI:
+            try:
+                result=fetch_observation(time.time(),self.server.upstream_url)
+                allowed=authorized_lan_host(
+                    result,source_ip=self.client_address[0],
+                    interface=self.server.lan_interface)
+                if not allowed:
+                    self.send_error(403,"Host not authorised for NAT forwarding")
+                    return
+                payload=json.dumps(result,separators=(",",":")).encode("utf-8")
+            except (OSError,ValueError,TimeoutError,json.JSONDecodeError):
+                self.send_error(503,"Gateway status unavailable")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type","application/json")
+            self.send_header("Cache-Control","no-store")
+            self.send_header("X-Content-Type-Options","nosniff")
+            self.send_header("Content-Length",str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
             return
         if self.path != URI:
             self.send_error(404)
@@ -185,6 +247,7 @@ class LanServer(ThreadingHTTPServer):
         self.server_bind()
         self.server_activate()
         self.access_token = token
+        self.lan_interface = interface
         self.upstream_url = UPSTREAM
 
 

@@ -162,5 +162,17 @@ printf 'VPNGW_WG_PROFILE_DIR="%s/wireguard-profiles"\n' "$profile_data" > /etc/d
 chmod 0644 /etc/default/vpngw-policy-agent
 systemctl restart vpngw-policy-agent.service
 systemctl is-active --quiet vpngw-policy-agent.service
+# Publish a LAN-only read-only status endpoint. This endpoint never changes
+# host policy and serves only the Gateway-authorised host IP + verified MAC.
+bash installers/install-port-status-linux.sh >/dev/null
+if [[ ! -s /etc/vpngw-port-status/lan.crt || ! -s /etc/vpngw-port-status/lan.key ]]; then
+  install -m 0644 deploy/tls-local/lan.crt /etc/vpngw-port-status/lan.crt
+  install -m 0600 deploy/tls-local/lan.key /etc/vpngw-port-status/lan.key
+fi
+printf 'VPNGW_PORT_STATUS_LAN_INTERFACE=%s\nVPNGW_PORT_STATUS_LAN_IP=%s\nVPNGW_PORT_STATUS_PORT=9443\n' "$LAN_IFACE" "$LAN_IPV4" > /etc/vpngw-port-status/env
+chmod 0600 /etc/vpngw-port-status/env
+systemctl enable --now vpngw-port-status.service >/dev/null
+systemctl restart vpngw-port-status.service
+systemctl is-active --quiet vpngw-port-status.service
 echo "WebAdmin: https://$LAN_IPV4/"
 echo "Pi-hole DNS: $LAN_IPV4:53; administração: https://$LAN_IPV4:8443/"

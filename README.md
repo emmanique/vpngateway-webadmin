@@ -25,6 +25,16 @@ remains on port 9443 once provisioned. See
 [MediaHub independent Gateway installation](docs/mediahub-sync-explicit-gateway.md).
 The observer is disabled until credentials are provisioned.
 
+## Release estável v1.0.8 — detecção automática do Stremio autorizado
+
+A instalação \`sudo ./start.sh\` publica automaticamente em \`https://IP-LAN:9443\` o serviço Linux de observação NAT-PMP. A API administrativa de consulta continua autenticada por token e não é disponibilizada publicamente.
+
+O novo endpoint \`GET /api/v1/port-forward/authorized-host\` apenas devolve a atribuição **ao próprio host que o Gateway autorizou**, verificando IP de origem, MAC conhecido pelo kernel, política seleccionada e regras de encaminhamento activas. Não entrega tokens ou chaves. A instalação do Stremio \`v0.1.3-rc.9\` consulta este endpoint quando o Gateway coincide com o seu próximo salto predefinido e fixa o certificado TLS no primeiro acesso (TOFU). Alterações inesperadas de certificado são rejeitadas.
+
+**Modelo de confiança:** a admissão baseada em IP/MAC exige uma LAN de gestão controlada com protecção contra ARP/MAC spoofing; TOFU não oferece autenticação forte no primeiro contacto. Não exponha TCP/9443 na WAN nem utilize este modo numa rede partilhada/não confiável. Para redes não confiáveis, mantenha o observador anterior com CA aprovada e token de leitura. O Gateway nunca altera o container nem o \`.env\` do Stremio; a alteração e rollback são responsabilidade exclusiva do reconciliador do host.
+
+**Release:** [v1.0.8](https://github.com/emmanique/vpngateway-webadmin/releases/tag/v1.0.8).
+
 ## Release estável v1.0.7 — Pi-hole sem password e estado DNS
 
 A instalação nova configura o Pi-hole v6 **sem password**, para que o WebAdmin consiga consultar versão, DNS e estatísticas através da rede Docker interna. O endpoint DNS é `/api/dns/blocking`; os contadores do dashboard são obtidos de `/api/stats/summary`. O WebAdmin comunica a versão `1.0.7` da distribuição. A configuração `deploy/.env` já existente não é substituída durante upgrades.
@@ -254,4 +264,3 @@ MIT — see [LICENSE](LICENSE).
 ## Release 1.0.3 compatibility
 
 Upgrade from 1.0.2 retains persistent configuration when installed through the normal `start.sh` workflow. The provider's public NAT-PMP port may change; the external MediaHub synchroniser must validate each lease and adjust its own service. Do not publish provider credentials or local certificate keys.
-

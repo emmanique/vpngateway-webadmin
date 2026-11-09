@@ -1,0 +1,78 @@
+# Gateway host-authorised NAT-PMP status, stable v1.0.8
+name: Publish stable v1.0.8
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release-v1.0.8.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-v1.0.8
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Check version and Python onboarding contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat VERSION)" = '1.0.8'
+          python3 -m py_compile apps/api/main.py
+          python3 -m unittest discover -s tests -p 'test_topology_onboarding_contract.py' -v
+          python3 -m unittest discover -s tests -p 'test_authorized_host_port_status.py' -v
+          python3 -m py_compile scripts/vpngw-port-status-service.py
+          bash -n installers/install-port-status-linux.sh
+          python3 -m unittest discover -s tests -p 'test_public_fresh_install_contract.py' -v
+          python3 -m unittest discover -s tests -p 'test_qa_install_release_contract.py' -v
+          bash -n start.sh
+          test -x start.sh
+      - name: Build and validate WebAdmin
+        working-directory: apps/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Build deterministic deployment archives and verify SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build-release-packages.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, tarfile, zipfile
+          p = Path('releases/public-build')
+          m = json.loads((p/'manifest.json').read_text())
+          assert m['version']=='1.0.8'
+          assert m['commit']=='${{ github.sha }}'
+          assert len(m['files'])==2
+          for name,digest in m['files'].items():
+              assert hashlib.sha256((p/name).read_bytes()).hexdigest()==digest
+              if name.endswith('.zip'):
+                  with zipfile.ZipFile(p/name) as z: assert z.testzip() is None
+              else:
+                  with tarfile.open(p/name,'r:gz') as t: assert t.getmembers()
+          PY
+      - name: Publish stable release with integrity manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd releases/public-build
+          if gh release view v1.0.8 >/dev/null 2>&1; then
+            gh release upload v1.0.8 gateway-vpn-multi-1.0.8-deployment.tar.gz gateway-vpn-multi-1.0.8-deployment.zip manifest.json --clobber
+          else
+            gh release create v1.0.8 gateway-vpn-multi-1.0.8-deployment.tar.gz gateway-vpn-multi-1.0.8-deployment.zip manifest.json --target "$GITHUB_SHA" --title 'VPN Gateway Multi v1.0.8' --notes-file ../../docs/releases/v1.0.8.md --latest
+          fi
+          gh release view v1.0.8 --json url,tagName,isPrerelease,assets
