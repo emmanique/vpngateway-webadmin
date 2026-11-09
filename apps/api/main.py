@@ -1857,6 +1857,8 @@ def get_network_config():
 
 @app.put("/api/v1/network/config")
 def save_network_config(data: NetworkDraft):
+    if get_network_config()["applied"]:
+        raise HTTPException(409, "Topologia confirmada e bloqueada; alteracoes exigem reposicao administrativa explicita")
     topology = network_topology()
     available = {i["interface"] for i in topology["interfaces"] if i["operstate"] == "UP" and i.get("kind") in ("wifi", "ethernet", "vlan")}
     names = [i.interface for i in data.interfaces]

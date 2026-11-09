@@ -1,3 +1,4 @@
+# Retry after backend topology lock source synchronization
 name: Publish stable v1.0.7
 on:
   push:
