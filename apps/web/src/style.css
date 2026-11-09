@@ -96,3 +96,5 @@ footer{color:#c0d3c5}.tag{background:rgba(30,47,31,.85)}
 .topology-lan{border-color:#487b60}
 .topology-wan{border-color:#688a62}
 @media(max-width:850px){.topology-layout{grid-template-columns:minmax(0,1fr)}.topology-arrow{transform:rotate(90deg)}}
+
+.navitem:disabled{opacity:.42;cursor:not-allowed;background:transparent;color:#9da79d}.navitem:disabled:hover{background:transparent}

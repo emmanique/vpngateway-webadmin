@@ -147,7 +147,26 @@ sudo ./start.sh --lan-interface enp2s0 --lan-ip 192.168.50.2
 | WebAdmin | `https://<gateway-lan-ip>/` |
 | Pi-hole administration | `https://<gateway-lan-ip>:8443/` |
 
-The launcher discovers the management IPv4, installs local agents, prepares a self-signed TLS certificate and a **new random Pi-hole password stored in deploy/.env (0600)**, and deploys the containers. Existing deploy/.env is preserved during upgrades. For routine upgrades, rerun `sudo ./start.sh` rather than deleting persistent volumes. Never commit `deploy/.env`, VPN private keys, certificates, credential files or backup archives.
+The launcher discovers the management IPv4, installs local agents, prepares a self-signed TLS certificate and, **on fresh installations only, an empty Pi-hole password** in `deploy/.env` (0600) for read-only API visibility in the WebAdmin. Pi-hole administration on TCP/8443 is therefore unauthenticated: **allow only a trusted private management LAN, never WAN port-forwarding**. Existing `deploy/.env` is preserved during upgrades. Do not commit `deploy/.env`, VPN private keys, certificates, credential files or backup archives.
+
+## Update from an existing Git clone (same server)
+
+Updates are made **from the public repository**, not by copying files from a development machine. Perform a backup of the WebAdmin configuration and existing VPN profiles before upgrading. The normal update preserves Docker named volumes, profiles, TLS certificates and `deploy/.env`.
+
+```bash
+cd /root/vpngateway-webadmin    # adjust if cloned to another directory
+git fetch origin main
+git checkout main
+git pull --ff-only origin main
+cat VERSION
+sudo ./start.sh
+```
+
+The installer rebuilds the source images and recreates only the Compose services that require it. Verify `https://GATEWAY_LAN_IP/` and `https://GATEWAY_LAN_IP:8443/admin/` after the update. **Do not execute** `docker compose down -v` on an upgrade.
+
+If the existing `deploy/.env` contains a non-empty `PIHOLE_WEBPASSWORD` from an older release, the password is **deliberately preserved**. In that case the read-only Pi-hole API in WebAdmin remains unavailable until an administrator chooses a compatible mode and reconciles the Pi-hole service. For *trusted-LAN-only passwordless operation*, back up `deploy/.env`, set `PIHOLE_WEBPASSWORD=` and rerun `sudo ./start.sh`. Never remove Pi-hole authentication if TCP/8443 can be reached by untrusted clients.
+
+**Onboarding:** until WAN/LAN topology is confirmed, only Overview and WAN/LAN are enabled; after confirmation the other menus unlock and topology editing is locked. This state is persisted in the WebAdmin database across restarts. Intentional topology redesign requires a separately controlled administrative reset; ordinary Save cannot overwrite a confirmed topology.
 
 ## Configuration workflow
 

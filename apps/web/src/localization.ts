@@ -1,5 +1,8 @@
 /** UI translation for legacy text while components migrate to typed message keys. */
 const entries: Record<string,string> = {
+'Topologia confirmada. Os campos de rede estão bloqueados para impedir alterações acidentais.':'Topology confirmed. Network fields are locked to prevent accidental changes.',
+'Configuração confirmada e bloqueada':'Configuration confirmed and locked',
+
 'BLOQUEADO protege apenas o tráfego encaminhado por este gateway. Se o cliente utilizar outro router predefinido na mesma LAN, poderá contornar a política. Para bloqueio efectivo, use o gateway do cliente ou ACL na rede de acesso.':'BLOCKED only protects traffic routed through this gateway. If the client uses another default router on the same LAN, it can bypass the policy. For effective blocking, configure the client gateway or apply ACLs on the access network.',
 'Bloqueado':'Blocked',
 '● Bloqueio medido':'● Blocking measured',
