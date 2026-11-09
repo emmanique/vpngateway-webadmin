@@ -1,3 +1,4 @@
+# Re-run after the versioned install contract was updated
 # Gateway host-authorised NAT-PMP status, stable v1.0.8
 name: Publish stable v1.0.8
 on:

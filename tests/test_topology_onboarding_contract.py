@@ -28,7 +28,7 @@ class TopologyOnboardingContract(unittest.TestCase):
         self.assertIn('version=os.environ.get("VPNGW_RELEASE_VERSION"', src)
         self.assertIn("return {'version':app.version,", src)
         compose = (ROOT / "deploy/compose.yml").read_text()
-        self.assertIn('VPNGW_RELEASE_VERSION: "${VPNGW_IMAGE_TAG:-1.0.7}"', compose)
+        self.assertIn('VPNGW_RELEASE_VERSION: "${VPNGW_IMAGE_TAG:-1.0.8}"', compose)
 
 
 if __name__ == "__main__":
