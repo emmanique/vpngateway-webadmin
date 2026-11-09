@@ -25,9 +25,11 @@ remains on port 9443 once provisioned. See
 [MediaHub independent Gateway installation](docs/mediahub-sync-explicit-gateway.md).
 The observer is disabled until credentials are provisioned.
 
-## Release candidata 1.0.6 — fresh install em ambientes novos
+## Release estável v1.0.6 — instalação e packages
 
-A branch pública `main` contém as correcções posteriores à tag `v1.0.5`: instalação de Docker Compose v2 em Debian 13, validação de Buildx, segredo Pi-hole gerado na primeira instalação e bootstrap MediaHub com endereço independente do router predefinido. Para a QA integral, usar uma revisão exacta desta branch, não os pacotes antigos da release `v1.0.5`. As imagens WebAdmin/VPN são construídas a partir do clone público; não dependem de imagens pré-instaladas. As provas de campo continuam pendentes nas máquinas novas.
+**Release publicada:** [v1.0.6](https://github.com/emmanique/vpngateway-webadmin/releases/tag/v1.0.6), com archives `.zip`, `.tar.gz` e `manifest.json` (SHA-256). Para instalar a partir de código, utilizar a tag `v1.0.6` ou verificar `VERSION=1.0.6` em `main`; as imagens WebAdmin/VPN são construídas localmente a partir da revisão seleccionada. Não utilizar os packages antigos `v1.0.5` como se fossem a revisão actual.
+
+Esta versão corrige os contadores direccionais RX/TX e a contagem de pacotes bloqueados; mantém excepções HTTPS de gestão restritas por host e reconcilia-as após reinícios do agente ou mudanças do proxy Docker. **Validação:** 506 testes + 80 subtestes aprovados, WebAdmin e API HTTPS 200 e políticas da máquina de ensaio verificadas. O router upstream `.1` fica fora do âmbito do software gateway `.235`; o bloqueio aplica-se a tráfego que realmente atravessa o gateway. Consulte [notas da release](docs/releases/v1.0.6.md).
 
 ## Release 1.0.5 — MediaHub observer and WebAdmin routing correction
 
