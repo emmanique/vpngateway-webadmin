@@ -31,8 +31,9 @@ class PublicFreshInstallContract(unittest.TestCase):
         launcher = (ROOT / "start.sh").read_text()
         compose = (ROOT / "deploy/compose.yml").read_text()
         self.assertIn('export VPNGW_IMAGE_TAG="$(cat VERSION)"', launcher)
-        self.assertIn('image: vpngateway/webadmin:${VPNGW_IMAGE_TAG:-1.0.6-rc.1}', compose)
-        self.assertIn('image: vpngateway/vpn:${VPNGW_IMAGE_TAG:-1.0.6-rc.1}', compose)
+        version = (ROOT / "VERSION").read_text().strip()
+        self.assertIn('image: vpngateway/webadmin:${VPNGW_IMAGE_TAG:-' + version + '}', compose)
+        self.assertIn('image: vpngateway/vpn:${VPNGW_IMAGE_TAG:-' + version + '}', compose)
         self.assertNotIn('image: vpngateway/webadmin:1.0.3', compose)
 
     def test_existing_env_is_not_overwritten(self):

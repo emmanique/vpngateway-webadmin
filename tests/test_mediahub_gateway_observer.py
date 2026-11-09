@@ -57,5 +57,5 @@ def test_bootstrap_targets_existing_stremio_reconciler():
     installer = (ROOT / "installers/install-mediahub-gateway-port-sync-linux.sh").read_text()
     assert 'com.docker.compose.project.working_dir' in installer
     assert '"SOURCE":"observation"' in installer
-    assert '"ENABLED":"1"' in installer
+    assert '"ENABLED":"0"' in installer
     assert "stremio-webadmin-reconcile" not in installer or "timer" in installer

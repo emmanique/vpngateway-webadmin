@@ -25,7 +25,7 @@ remains on port 9443 once provisioned. See
 [MediaHub independent Gateway installation](docs/mediahub-sync-explicit-gateway.md).
 The observer is disabled until credentials are provisioned.
 
-## Release candidata 1.0.6-rc.3 — fresh install em ambientes novos
+## Release candidata 1.0.6 — fresh install em ambientes novos
 
 A branch pública `main` contém as correcções posteriores à tag `v1.0.5`: instalação de Docker Compose v2 em Debian 13, validação de Buildx, segredo Pi-hole gerado na primeira instalação e bootstrap MediaHub com endereço independente do router predefinido. Para a QA integral, usar uma revisão exacta desta branch, não os pacotes antigos da release `v1.0.5`. As imagens WebAdmin/VPN são construídas a partir do clone público; não dependem de imagens pré-instaladas. As provas de campo continuam pendentes nas máquinas novas.
 
