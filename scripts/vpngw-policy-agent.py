@@ -258,28 +258,62 @@ def inspect_rules(pid):
         return False
 
 
+def _counter_for_direction(rules, host, lan, vpn, direction):
+    """Match rule semantics rather than positional counters or management accepts."""
+    source = direction == "tx"
+    expected = [
+        ("meta", "iifname", lan if source else vpn),
+        ("meta", "oifname", vpn if source else lan),
+        ("payload", ("ip", "saddr") if source else ("ip", "daddr"), host),
+    ]
+    matched = []
+    for item in rules.get("nftables", []):
+        expr = item.get("rule", {}).get("expr", [])
+        if not any("accept" in e for e in expr):
+            continue
+        checks = []
+        for e in expr:
+            match = e.get("match")
+            if not match or match.get("op") != "==":
+                continue
+            left = match.get("left", {})
+            if "meta" in left:
+                checks.append(("meta", left["meta"].get("key"), match.get("right")))
+            if "payload" in left:
+                value = left["payload"]
+                checks.append(("payload", (value.get("protocol"), value.get("field")), match.get("right")))
+        if all(criterion in checks for criterion in expected):
+            matched.extend(e["counter"] for e in expr if "counter" in e)
+    return matched[0] if len(matched) == 1 else None
+
+
 def read_counters(pid, state):
-    """Read actual forwarding byte counters from the per-host nft chain."""
+    """Count only identified forwarding paths; blocked traffic is a separate metric."""
     if state.get("status") not in ("pending", "active") or not inspect_rules(pid):
         return None
     plan = state.get("plan") or {}
     try:
         rules = json.loads(run(NFT, "-j", "list", "chain", "ip", "filter", chain_name(pid)).stdout)
-        counters = []
-        for item in rules.get("nftables", []):
-            rule = item.get("rule", {})
-            for expression in rule.get("expr", []):
-                if "counter" in expression:
-                    counters.append(expression["counter"])
-        if (plan.get("destination") == "direct" or
-                str(plan.get("destination", "")).startswith("vpn-")) and len(counters) >= 2:
-            return {"tx_bytes": int(counters[0]["bytes"]),
-                    "rx_bytes": int(counters[1]["bytes"]),
-                    "tx_packets": int(counters[0]["packets"]),
-                    "rx_packets": int(counters[1]["packets"])}
-        if plan.get("destination") == "blocked" and counters:
-            return {"dropped_bytes": int(counters[0]["bytes"]),
-                    "dropped_packets": int(counters[0]["packets"])}
+        if plan.get("destination") == "blocked":
+            matches = []
+            for item in rules.get("nftables", []):
+                expr = item.get("rule", {}).get("expr", [])
+                if not any("drop" in e for e in expr):
+                    continue
+                checks = [e["match"] for e in expr if "match" in e]
+                if any(m.get("op") == "==" and m.get("left", {}).get("payload") == {"protocol": "ip", "field": "saddr"} and m.get("right") == plan["host"] for m in checks):
+                    matches.extend(e["counter"] for e in expr if "counter" in e)
+            if len(matches) == 1:
+                return {"dropped_bytes": int(matches[0]["bytes"]), "dropped_packets": int(matches[0]["packets"])}
+            return None
+        vpn = (state.get("vpn_runtime") or {}).get("interface") if plan.get("destination") not in ("direct", "blocked") else plan.get("wan")
+        if not vpn:
+            return None
+        tx = _counter_for_direction(rules, plan["host"], plan["lan"], vpn, "tx")
+        rx = _counter_for_direction(rules, plan["host"], plan["lan"], vpn, "rx")
+        if tx is not None and rx is not None:
+            return {"tx_bytes": int(tx["bytes"]), "rx_bytes": int(rx["bytes"]),
+                    "tx_packets": int(tx["packets"]), "rx_packets": int(rx["packets"])}
     except (KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError):
         pass
     return None

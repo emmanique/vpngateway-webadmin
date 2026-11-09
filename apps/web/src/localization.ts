@@ -1,5 +1,7 @@
 /** UI translation for legacy text while components migrate to typed message keys. */
 const entries: Record<string,string> = {
+'Bloqueado':'Blocked',
+'● Bloqueio medido':'● Blocking measured',
 'UPnP físico:':'Physical UPnP:',
 'VPN: encaminhamento por NAT-PMP do fornecedor (não UPnP físico)':'VPN: provider NAT-PMP forwarding (not physical-router UPnP)',
 'Porta DIRECT: ':'DIRECT port: ',

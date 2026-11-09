@@ -642,7 +642,7 @@ def overview_status():
                "measurement": "unavailable", "note": "Saída disponível; tráfego por rota não instrumentado"}]
     routes.append({"id": "blocked", "name": "BLOQUEADO", "available": False,
                    "active": False, "hosts": [], "rx_bps": None, "tx_bps": None,
-                   "measurement": "unavailable", "note": "Política lógica; bloqueio ainda não aplicado"})
+                   "measurement": "unavailable", "note": "Bloqueio configurado; tentativas rejeitadas medidas separadamente"})
     interfaces_by_route = {}
     for conn in connections:
         vpn_state = {"tunnel_active": False, "connected": False, "state": "unavailable"}
@@ -673,6 +673,7 @@ def overview_status():
                 continue
         runtime_status = "draft"
         authorization_status = "unverified"
+        blocked_counters = None
         try:
             runtime_state = _policy_agent_call("status", policy["id"], policy)
             authorization_status = runtime_state.get("authorization_status", "unverified")
@@ -683,13 +684,16 @@ def overview_status():
                 measured[(effective_vpn or policy["destination"], policy["host_ip"])] = (
                     int(counters["rx_bytes"]), int(counters["tx_bytes"]),
                     datetime.now(timezone.utc).timestamp())
+            blocked_counters = counters if runtime_status == "active" and policy["destination"] == "blocked" else None
         except HTTPException:
             pass
         for route in routes:
             if route["id"] == (effective_vpn or policy["destination"]):
                 route["hosts"].append({"ip": policy["host_ip"], "status": "vpn_trial" if effective_vpn else runtime_status, "authorization_status": authorization_status,
                                        "rx_bps": None, "tx_bps": None,
-                                       "rx_bytes": None, "tx_bytes": None})
+                                       "rx_bytes": None, "tx_bytes": None,
+                                       "dropped_bytes": int(blocked_counters["dropped_bytes"]) if blocked_counters and "dropped_bytes" in blocked_counters else None,
+                                       "dropped_packets": int(blocked_counters["dropped_packets"]) if blocked_counters and "dropped_packets" in blocked_counters else None})
     # Never count detected LAN devices or draft-only policies as active gateway clients.
     with _lock:
         for route in routes:
@@ -699,7 +703,7 @@ def overview_status():
                     continue
                 rx, tx, stamp = measured[key]
                 prior = _traffic_previous.get(key)
-                host["rx_bytes"], host["tx_bytes"] = _accumulate_host_traffic(route["id"],host["ip"],rx,tx)
+                host["rx_bytes"], host["tx_bytes"] = _accumulate_host_traffic("v2:"+route["id"],host["ip"],rx,tx)
                 host["status"] = "gateway_measured"
                 if prior and stamp > prior[2] and rx >= prior[0] and tx >= prior[1]:
                     elapsed = stamp - prior[2]
